@@ -1438,7 +1438,7 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
         let share = shares::Share {
             id: result.id,
             key: result.key,
-            key_hash: result.key_hash,
+            delete_token: result.delete_token,
             upload_url: result.upload_url,
             created_at: time::OffsetDateTime::now_utc(),
             expires_at: time::OffsetDateTime::from_unix_timestamp(result.expires_at as i64)

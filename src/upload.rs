@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result, bail};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::RngCore;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 #[derive(Deserialize)]
 struct UploadResponse {
@@ -16,18 +15,17 @@ struct UploadResponse {
 pub struct UploadResult {
     pub id: String,
     pub key: String,
-    pub key_hash: String,
+    pub delete_token: String,
     pub share_url: String,
     pub upload_url: String,
     pub expires_at: u64,
 }
 
-/// Compute SHA256 hash of base64url-encoded key
-pub fn compute_key_hash(key_b64: &str) -> String {
-    let key_bytes = URL_SAFE_NO_PAD.decode(key_b64).unwrap_or_default();
-    let mut hasher = Sha256::new();
-    hasher.update(&key_bytes);
-    hex::encode(hasher.finalize())
+/// Generate a random delete token (64 hex chars)
+fn generate_delete_token() -> String {
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
 }
 
 /// Upload encrypted blob to worker, return upload result with all metadata
@@ -38,11 +36,11 @@ pub fn upload_blob(
     ttl_days: u64,
 ) -> Result<UploadResult> {
     let endpoint = format!("{}/upload", upload_url.trim_end_matches('/'));
-    let key_hash = compute_key_hash(key_b64);
+    let delete_token = generate_delete_token();
 
     let response = ureq::post(&endpoint)
         .set("Content-Type", "application/octet-stream")
-        .set("X-Key-Hash", &key_hash)
+        .set("X-Delete-Token", &delete_token)
         .set("X-TTL-Days", &ttl_days.to_string())
         .send_bytes(blob)
         .context("Failed to upload blob")?;
@@ -64,20 +62,19 @@ pub fn upload_blob(
     Ok(UploadResult {
         id: upload_response.id,
         key: key_b64.to_string(),
-        key_hash,
+        delete_token,
         share_url,
         upload_url: base_url.to_string(),
         expires_at: upload_response.expires_at,
     })
 }
 
-/// Delete a blob from the server
-pub fn delete_blob(upload_url: &str, id: &str, key_b64: &str) -> Result<()> {
+/// Delete a blob from the server using the delete token
+pub fn delete_blob(upload_url: &str, id: &str, delete_token: &str) -> Result<()> {
     let endpoint = format!("{}/blob/{}", upload_url.trim_end_matches('/'), id);
-    let key_hash = compute_key_hash(key_b64);
 
     let response = ureq::delete(&endpoint)
-        .set("X-Key-Hash", &key_hash)
+        .set("X-Delete-Token", delete_token)
         .call()
         .context("Failed to delete blob")?;
 

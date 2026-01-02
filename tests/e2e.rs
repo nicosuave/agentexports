@@ -6,7 +6,7 @@
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use flate2::read::GzDecoder;
-use sha2::{Digest, Sha256};
+use rand::RngCore;
 use std::io::Read;
 
 /// Test the full encrypt -> upload -> fetch -> decrypt roundtrip
@@ -34,10 +34,10 @@ fn test_e2e_roundtrip() {
 
     // Upload to worker
     let upload_url = format!("{}/upload", worker_url);
-    let key_hash = compute_key_hash(&encrypted.key_b64);
+    let delete_token = generate_delete_token();
     let response = ureq::post(&upload_url)
         .set("Content-Type", "application/octet-stream")
-        .set("X-Key-Hash", &key_hash)
+        .set("X-Delete-Token", &delete_token)
         .send_bytes(&encrypted.blob)
         .expect("upload failed");
 
@@ -94,11 +94,11 @@ fn test_viewer_page_served() {
     // First upload something
     let test_html = "<html><body>test</body></html>";
     let encrypted = encrypt_html(test_html).unwrap();
-    let key_hash = compute_key_hash(&encrypted.key_b64);
+    let delete_token = generate_delete_token();
 
     let response = ureq::post(&format!("{}/upload", worker_url))
         .set("Content-Type", "application/octet-stream")
-        .set("X-Key-Hash", &key_hash)
+        .set("X-Delete-Token", &delete_token)
         .send_bytes(&encrypted.blob)
         .unwrap();
 
@@ -135,21 +135,21 @@ fn test_blob_not_found() {
     }
 }
 
-/// Test delete flow with key hash authentication
+/// Test delete flow with delete token authentication
 #[test]
 #[ignore]
-fn test_delete_with_key_hash() {
+fn test_delete_with_token() {
     let worker_url =
         std::env::var("WORKER_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
     // Upload a blob
     let test_html = "<html><body>delete test</body></html>";
     let encrypted = encrypt_html(test_html).unwrap();
-    let key_hash = compute_key_hash(&encrypted.key_b64);
+    let delete_token = generate_delete_token();
 
     let response = ureq::post(&format!("{}/upload", worker_url))
         .set("Content-Type", "application/octet-stream")
-        .set("X-Key-Hash", &key_hash)
+        .set("X-Delete-Token", &delete_token)
         .send_bytes(&encrypted.blob)
         .unwrap();
 
@@ -161,19 +161,19 @@ fn test_delete_with_key_hash() {
     let response = ureq::get(&format!("{}/blob/{}", worker_url, id)).call();
     assert!(response.is_ok(), "Blob should exist");
 
-    // Try to delete with wrong key hash - should fail
-    let wrong_hash = "0".repeat(64);
+    // Try to delete with wrong token - should fail
+    let wrong_token = "0".repeat(64);
     let response = ureq::delete(&format!("{}/blob/{}", worker_url, id))
-        .set("X-Key-Hash", &wrong_hash)
+        .set("X-Delete-Token", &wrong_token)
         .call();
     match response {
-        Err(ureq::Error::Status(401, _)) => println!("Correctly rejected wrong key hash"),
-        other => panic!("Expected 401 for wrong key hash, got {:?}", other),
+        Err(ureq::Error::Status(401, _)) => println!("Correctly rejected wrong token"),
+        other => panic!("Expected 401 for wrong token, got {:?}", other),
     }
 
-    // Delete with correct key hash - should succeed
+    // Delete with correct token - should succeed
     let response = ureq::delete(&format!("{}/blob/{}", worker_url, id))
-        .set("X-Key-Hash", &key_hash)
+        .set("X-Delete-Token", &delete_token)
         .call()
         .expect("delete should succeed");
     assert_eq!(response.status(), 204, "Delete should return 204");
@@ -189,28 +189,28 @@ fn test_delete_with_key_hash() {
     println!("✓ Delete test PASSED!");
 }
 
-/// Test delete without key hash fails
+/// Test delete without token fails
 #[test]
 #[ignore]
-fn test_delete_requires_key_hash() {
+fn test_delete_requires_token() {
     let worker_url =
         std::env::var("WORKER_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
     // Upload a blob
     let test_html = "<html><body>auth test</body></html>";
     let encrypted = encrypt_html(test_html).unwrap();
-    let key_hash = compute_key_hash(&encrypted.key_b64);
+    let delete_token = generate_delete_token();
 
     let response = ureq::post(&format!("{}/upload", worker_url))
         .set("Content-Type", "application/octet-stream")
-        .set("X-Key-Hash", &key_hash)
+        .set("X-Delete-Token", &delete_token)
         .send_bytes(&encrypted.blob)
         .unwrap();
 
     let upload_response: serde_json::Value = response.into_json().unwrap();
     let id = upload_response["id"].as_str().unwrap();
 
-    // Try to delete without key hash - should fail
+    // Try to delete without token - should fail
     let response = ureq::delete(&format!("{}/blob/{}", worker_url, id)).call();
     match response {
         Err(ureq::Error::Status(401, _)) => println!("✓ Delete auth test PASSED!"),
@@ -277,10 +277,9 @@ fn decrypt_blob(blob: &[u8], key_b64: &str) -> Result<String, Box<dyn std::error
     Ok(html)
 }
 
-// Helper: compute SHA256 hash of key for authentication
-fn compute_key_hash(key_b64: &str) -> String {
-    let key_bytes = URL_SAFE_NO_PAD.decode(key_b64).unwrap_or_default();
-    let mut hasher = Sha256::new();
-    hasher.update(&key_bytes);
-    hex::encode(hasher.finalize())
+// Helper: generate random delete token (64 hex chars)
+fn generate_delete_token() -> String {
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
 }

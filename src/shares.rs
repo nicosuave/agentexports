@@ -11,7 +11,8 @@ use time::OffsetDateTime;
 pub struct Share {
     pub id: String,
     pub key: String,
-    pub key_hash: String,
+    /// Random token for delete authorization (only uploader has this)
+    pub delete_token: String,
     pub upload_url: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -115,7 +116,7 @@ mod tests {
         Share {
             id: id.to_string(),
             key: "key123".to_string(),
-            key_hash: "hash123".to_string(),
+            delete_token: "token123".to_string(),
             upload_url: "https://example.com".to_string(),
             created_at: OffsetDateTime::now_utc(),
             expires_at: OffsetDateTime::now_utc(),

@@ -58,7 +58,7 @@ fn cors_headers() -> Headers {
     let _ = headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     let _ = headers.set(
         "Access-Control-Allow-Headers",
-        "Content-Type, X-Key-Hash, X-TTL-Days",
+        "Content-Type, X-Delete-Token, X-TTL-Days",
     );
     headers
 }
@@ -112,11 +112,12 @@ async fn handle_upload(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
         }
     }
 
-    // Get key hash from header (required for delete auth)
-    let key_hash = req.headers().get("X-Key-Hash")?.unwrap_or_default();
-    if key_hash.is_empty() || key_hash.len() != 64 {
+    // Get delete token from header (required for delete auth)
+    // This is separate from the encryption key - only uploader has it
+    let delete_token = req.headers().get("X-Delete-Token")?.unwrap_or_default();
+    if delete_token.is_empty() || delete_token.len() != 64 {
         return with_cors(Response::error(
-            "Missing or invalid X-Key-Hash header",
+            "Missing or invalid X-Delete-Token header",
             400,
         )?);
     }
@@ -156,7 +157,7 @@ async fn handle_upload(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     // Store with metadata
     let mut metadata = std::collections::HashMap::new();
     metadata.insert("uploaded_at".to_string(), uploaded_at.to_string());
-    metadata.insert("key_hash".to_string(), key_hash);
+    metadata.insert("delete_token".to_string(), delete_token);
     bucket
         .put(&r2_path, body)
         .custom_metadata(metadata)
@@ -237,30 +238,30 @@ async fn handle_delete(req: Request, ctx: RouteContext<()>) -> Result<Response> 
         None => return with_cors(Response::error("Invalid ID", 400)?),
     };
 
-    // Get key hash from header
-    let key_hash = req.headers().get("X-Key-Hash")?.unwrap_or_default();
-    if key_hash.is_empty() {
-        return with_cors(Response::error("Missing X-Key-Hash header", 401)?);
+    // Get delete token from header
+    let delete_token = req.headers().get("X-Delete-Token")?.unwrap_or_default();
+    if delete_token.is_empty() {
+        return with_cors(Response::error("Missing X-Delete-Token header", 401)?);
     }
 
     let bucket = ctx.env.bucket("TRANSCRIPTS")?;
 
-    // Check blob exists and verify key hash
+    // Check blob exists and verify delete token
     match bucket.head(&r2_path).await? {
         Some(object) => {
-            let stored_hash = object
+            let stored_token = object
                 .custom_metadata()
                 .ok()
-                .and_then(|m| m.get("key_hash").cloned())
+                .and_then(|m| m.get("delete_token").cloned())
                 .unwrap_or_default();
 
-            if stored_hash.is_empty() {
-                // Legacy blob without key_hash - can't be deleted via API
+            if stored_token.is_empty() {
+                // Legacy blob without delete_token - can't be deleted via API
                 return with_cors(Response::error("Blob predates delete support", 403)?);
             }
 
-            if stored_hash != key_hash {
-                return with_cors(Response::error("Invalid key hash", 401)?);
+            if stored_token != delete_token {
+                return with_cors(Response::error("Invalid delete token", 401)?);
             }
 
             // Delete the blob
@@ -350,9 +351,9 @@ fn homepage_html() -> String {
 <body>
     <header>
         <h1>agentexports</h1>
-        <a href="https://github.com/nicosuave/agentexports">GitHub</a>
+        <a href="https://github.com/nicosuave/agentexport">GitHub</a>
     </header>
-    <p class="tagline">Share Claude Code and Codex transcripts. Encrypted locally, decryption key never leaves your URL.</p>
+    <p class="tagline">Share Claude Code and Codex transcripts. No signup required.</p>
 
     <h2>Install</h2>
     <div class="install-box" onclick="copyCmd(this)">
@@ -385,7 +386,16 @@ fn homepage_html() -> String {
     <p>Run <code>agentexport setup-skills</code> to install the skill, then type <code>/agentexport</code> in Claude Code or Codex.</p>
 
     <h2>How it works</h2>
-    <p>Transcripts are encrypted client-side before upload. The server only stores encrypted blobs. The decryption key lives in the URL fragment and is never sent to the server. Shares auto-expire after 30 days.</p>
+    <p>Transcripts are compressed and encrypted locally with AES-256-GCM before upload. The server only stores opaque encrypted blobs. Decryption happens entirely in the recipient's browser.</p>
+
+    <h2>Privacy</h2>
+    <p>The decryption key lives in the URL fragment (<code>#key</code>) which browsers never send to servers. The server operator cannot read your transcripts. Only people you share the URL with can decrypt and view the content.</p>
+
+    <h2>Expiration</h2>
+    <p>Shares auto-expire after 30 days by default. You can choose longer retention (60, 90, 180, 365 days) or keep shares forever using the <code>--ttl</code> flag.</p>
+
+    <h2>Self-hosting</h2>
+    <p>You can deploy your own instance using Cloudflare Workers and R2. See the <a href="https://github.com/nicosuave/agentexport#self-hosting">README</a> for instructions, then run <code>agentexport config set upload_url https://your-domain.com</code>.</p>
 </body>
 </html>
 "##.to_string()

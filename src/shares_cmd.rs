@@ -182,12 +182,12 @@ fn interactive() -> Result<()> {
     Ok(())
 }
 
-/// Delete blob from server using the key
+/// Delete blob from server using the delete token
 fn delete_from_server(share: &Share) -> Result<()> {
     let endpoint = format!("{}/blob/{}", share.upload_url, share.id);
 
     let response = ureq::delete(&endpoint)
-        .set("X-Key-Hash", &share.key_hash)
+        .set("X-Delete-Token", &share.delete_token)
         .call()?;
 
     if response.status() >= 400 {
