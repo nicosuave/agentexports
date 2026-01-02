@@ -1529,15 +1529,19 @@ mod tests {
     }
 
     #[test]
-    fn publish_renders_share_page() {
+    fn publish_renders_share_payload() {
         let _lock = env_lock();
         let tmp = TempDir::new().unwrap();
         let _guard = EnvGuard::set("AGENTEXPORT_CACHE_DIR", tmp.path().to_str().unwrap());
         let _guard_session = EnvGuard::set("AGENTEXPORT_CLAUDE_SESSION_ID", "");
         let transcript = tmp.path().join("sample.jsonl");
+        // Use Claude format with type field
         fs::write(
             &transcript,
-            "{\"role\":\"user\",\"content\":\"Hello\"}\n{\"role\":\"assistant\",\"content\":\"Hi\"}\n",
+            concat!(
+                "{\"type\":\"user\",\"message\":{\"content\":\"Hello\"}}\n",
+                "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Hi\"}]}}\n"
+            ),
         )
         .unwrap();
 
@@ -1554,10 +1558,10 @@ mod tests {
         .unwrap();
 
         let render_path = result.render_path.expect("render path");
-        let html = fs::read_to_string(render_path).unwrap();
-        assert!(html.contains("Agent Export"));
-        assert!(html.contains("Hello"));
-        assert!(html.contains("assistant"));
+        let json = fs::read_to_string(render_path).unwrap();
+        assert!(json.contains("\"tool\":\"Claude Code\""));
+        assert!(json.contains("Hello"));
+        assert!(json.contains("\"role\":\"assistant\""));
     }
 
     #[test]
@@ -1693,17 +1697,17 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("codex.jsonl");
         let data = concat!(
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"abc\"}}\n",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"abc\",\"originator\":\"codex_cli_rs\"}}\n",
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi\"}]}}\n",
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}}\n"
         );
         fs::write(&path, data).unwrap();
-        let messages = parse_transcript(&path).unwrap();
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].content, "Hi");
-        assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].content, "Hello");
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].role, "user");
+        assert_eq!(result.messages[0].content, "Hi");
+        assert_eq!(result.messages[1].role, "assistant");
+        assert_eq!(result.messages[1].content, "Hello");
     }
 
     #[test]
@@ -1711,13 +1715,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("codex.jsonl");
         let data = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"originator\":\"codex_cli_rs\"}}\n",
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"<environment_context>\\n  <cwd>/tmp</cwd>\\n</environment_context>\"}]}}\n",
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Real question\"}]}}\n"
         );
         fs::write(&path, data).unwrap();
-        let messages = parse_transcript(&path).unwrap();
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].content, "Real question");
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].content, "Real question");
     }
 
     #[test]
