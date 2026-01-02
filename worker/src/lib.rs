@@ -1,9 +1,33 @@
-use maud::{DOCTYPE, html, PreEscaped};
+use maud::{html, PreEscaped, DOCTYPE};
 use sha2::{Digest, Sha256};
 use worker::*;
 
 const MAX_BLOB_SIZE: usize = 10 * 1024 * 1024; // 10MB
-const DEFAULT_TTL_DAYS: u64 = 30;
+
+// TTL tiers: letter prefix -> (R2 prefix, days)
+// Letters chosen outside hex range (g-n) for easy parsing
+fn ttl_prefix_to_path(c: char) -> Option<(&'static str, u64)> {
+    match c {
+        'g' => Some(("30d", 30)),
+        'h' => Some(("60d", 60)),
+        'j' => Some(("90d", 90)),
+        'k' => Some(("180d", 180)),
+        'm' => Some(("365d", 365)),
+        'n' => Some(("forever", 0)), // 0 = no expiration
+        _ => None,
+    }
+}
+
+fn ttl_days_to_prefix(days: u64) -> char {
+    match days {
+        0..=30 => 'g',
+        31..=60 => 'h',
+        61..=90 => 'j',
+        91..=180 => 'k',
+        181..=365 => 'm',
+        _ => 'n', // forever
+    }
+}
 
 #[event(fetch)]
 async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
@@ -32,7 +56,10 @@ fn cors_headers() -> Headers {
     let headers = Headers::new();
     let _ = headers.set("Access-Control-Allow-Origin", "*");
     let _ = headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    let _ = headers.set("Access-Control-Allow-Headers", "Content-Type, X-Key-Hash");
+    let _ = headers.set(
+        "Access-Control-Allow-Headers",
+        "Content-Type, X-Key-Hash, X-TTL-Days",
+    );
     headers
 }
 
@@ -44,25 +71,35 @@ fn with_cors(mut response: Response) -> Result<Response> {
     Ok(response)
 }
 
-fn generate_id(data: &[u8]) -> String {
+fn generate_hash(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     let hash = hasher.finalize();
     hex::encode(&hash[..8])
 }
 
-fn is_valid_id(id: &str) -> bool {
-    id.len() == 16 && id.chars().all(|c| c.is_ascii_hexdigit())
+// Parse ID into (r2_path, hash, ttl_days)
+// ID format: {ttl_prefix}{16 hex chars} = 17 chars total
+// e.g., "gabc123def456789" where 'g' = 30d TTL
+fn parse_id(id: &str) -> Option<(String, String, u64)> {
+    if id.len() != 17 {
+        return None;
+    }
+    let prefix = id.chars().next()?;
+    let (r2_prefix, ttl_days) = ttl_prefix_to_path(prefix)?;
+    let hash = &id[1..];
+    if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some((
+        format!("{}/{}", r2_prefix, hash),
+        hash.to_string(),
+        ttl_days,
+    ))
 }
 
 fn current_timestamp() -> u64 {
     js_sys::Date::now() as u64 / 1000
-}
-
-fn is_expired(uploaded_at: u64, ttl_days: u64) -> bool {
-    let now = current_timestamp();
-    let ttl_seconds = ttl_days * 24 * 60 * 60;
-    now > uploaded_at + ttl_seconds
 }
 
 async fn handle_upload(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -76,13 +113,20 @@ async fn handle_upload(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     }
 
     // Get key hash from header (required for delete auth)
-    let key_hash = req
-        .headers()
-        .get("X-Key-Hash")?
-        .unwrap_or_default();
+    let key_hash = req.headers().get("X-Key-Hash")?.unwrap_or_default();
     if key_hash.is_empty() || key_hash.len() != 64 {
-        return with_cors(Response::error("Missing or invalid X-Key-Hash header", 400)?);
+        return with_cors(Response::error(
+            "Missing or invalid X-Key-Hash header",
+            400,
+        )?);
     }
+
+    // Get TTL from header (default 30 days)
+    let ttl_days: u64 = req
+        .headers()
+        .get("X-TTL-Days")?
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
 
     let body = req.bytes().await?;
     if body.len() > MAX_BLOB_SIZE {
@@ -92,24 +136,29 @@ async fn handle_upload(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
         return with_cors(Response::error("Empty body", 400)?);
     }
 
-    let id = generate_id(&body);
-    let bucket = ctx.env.bucket("TRANSCRIPTS")?;
+    // Generate hash and prefixed ID
+    let hash = generate_hash(&body);
+    let ttl_prefix = ttl_days_to_prefix(ttl_days);
+    let id = format!("{}{}", ttl_prefix, hash);
 
-    // Calculate expiration
-    let ttl_days = ctx
-        .env
-        .var("TTL_DAYS")
-        .map(|v| v.to_string().parse().unwrap_or(DEFAULT_TTL_DAYS))
-        .unwrap_or(DEFAULT_TTL_DAYS);
+    // Determine R2 path from TTL
+    let (r2_prefix, actual_ttl) = ttl_prefix_to_path(ttl_prefix).unwrap();
+    let r2_path = format!("{}/{}", r2_prefix, hash);
+
+    let bucket = ctx.env.bucket("TRANSCRIPTS")?;
     let uploaded_at = current_timestamp();
-    let expires_at = uploaded_at + (ttl_days * 24 * 60 * 60);
+    let expires_at = if actual_ttl > 0 {
+        uploaded_at + (actual_ttl * 24 * 60 * 60)
+    } else {
+        0 // forever
+    };
 
     // Store with metadata
     let mut metadata = std::collections::HashMap::new();
     metadata.insert("uploaded_at".to_string(), uploaded_at.to_string());
     metadata.insert("key_hash".to_string(), key_hash);
     bucket
-        .put(&id, body)
+        .put(&r2_path, body)
         .custom_metadata(metadata)
         .execute()
         .await?;
@@ -124,34 +173,17 @@ async fn handle_upload(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
 async fn handle_blob(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let id = ctx.param("id").unwrap();
 
-    if !is_valid_id(id) {
-        return with_cors(Response::error("Invalid ID", 400)?);
-    }
+    // Parse ID to get R2 path
+    let (r2_path, _, _) = match parse_id(id) {
+        Some(parsed) => parsed,
+        None => return with_cors(Response::error("Invalid ID", 400)?),
+    };
 
     let bucket = ctx.env.bucket("TRANSCRIPTS")?;
 
-    match bucket.get(id).execute().await? {
+    // R2 lifecycle rules handle expiration automatically
+    match bucket.get(&r2_path).execute().await? {
         Some(object) => {
-            // Check expiration
-            let ttl_days = ctx
-                .env
-                .var("TTL_DAYS")
-                .map(|v| v.to_string().parse().unwrap_or(DEFAULT_TTL_DAYS))
-                .unwrap_or(DEFAULT_TTL_DAYS);
-
-            if let Some(uploaded_at) = object
-                .custom_metadata()
-                .ok()
-                .and_then(|m| m.get("uploaded_at").cloned())
-                .and_then(|s| s.parse::<u64>().ok())
-            {
-                if is_expired(uploaded_at, ttl_days) {
-                    // Optionally delete expired blob
-                    let _ = bucket.delete(id).await;
-                    return with_cors(Response::error("Expired", 410)?);
-                }
-            }
-
             let body = object.body().ok_or_else(|| Error::from("No body"))?;
             let bytes = body.bytes().await?;
 
@@ -170,32 +202,16 @@ async fn handle_blob(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 async fn handle_viewer(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let id = ctx.param("id").unwrap();
 
-    if !is_valid_id(id) {
-        return Response::error("Invalid ID", 400);
-    }
+    // Parse ID to get R2 path
+    let (r2_path, _, _) = match parse_id(id) {
+        Some(parsed) => parsed,
+        None => return Response::error("Invalid ID", 400),
+    };
 
-    // Check blob exists and not expired
+    // Check blob exists (lifecycle rules handle expiration)
     let bucket = ctx.env.bucket("TRANSCRIPTS")?;
-    match bucket.head(id).await? {
-        Some(object) => {
-            let ttl_days = ctx
-                .env
-                .var("TTL_DAYS")
-                .map(|v| v.to_string().parse().unwrap_or(DEFAULT_TTL_DAYS))
-                .unwrap_or(DEFAULT_TTL_DAYS);
-
-            if let Some(uploaded_at) = object
-                .custom_metadata()
-                .ok()
-                .and_then(|m| m.get("uploaded_at").cloned())
-                .and_then(|s| s.parse::<u64>().ok())
-            {
-                if is_expired(uploaded_at, ttl_days) {
-                    return Response::error("Expired", 410);
-                }
-            }
-        }
-        None => return Response::error("Not found", 404),
+    if bucket.head(&r2_path).await?.is_none() {
+        return Response::error("Not found", 404);
     }
 
     let html = viewer_html(id);
@@ -215,15 +231,14 @@ async fn handle_viewer(_req: Request, ctx: RouteContext<()>) -> Result<Response>
 async fn handle_delete(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let id = ctx.param("id").unwrap();
 
-    if !is_valid_id(id) {
-        return with_cors(Response::error("Invalid ID", 400)?);
-    }
+    // Parse ID to get R2 path
+    let (r2_path, _, _) = match parse_id(id) {
+        Some(parsed) => parsed,
+        None => return with_cors(Response::error("Invalid ID", 400)?),
+    };
 
     // Get key hash from header
-    let key_hash = req
-        .headers()
-        .get("X-Key-Hash")?
-        .unwrap_or_default();
+    let key_hash = req.headers().get("X-Key-Hash")?.unwrap_or_default();
     if key_hash.is_empty() {
         return with_cors(Response::error("Missing X-Key-Hash header", 401)?);
     }
@@ -231,7 +246,7 @@ async fn handle_delete(req: Request, ctx: RouteContext<()>) -> Result<Response> 
     let bucket = ctx.env.bucket("TRANSCRIPTS")?;
 
     // Check blob exists and verify key hash
-    match bucket.head(id).await? {
+    match bucket.head(&r2_path).await? {
         Some(object) => {
             let stored_hash = object
                 .custom_metadata()
@@ -249,7 +264,7 @@ async fn handle_delete(req: Request, ctx: RouteContext<()>) -> Result<Response> 
             }
 
             // Delete the blob
-            bucket.delete(id).await?;
+            bucket.delete(&r2_path).await?;
             with_cors(Response::empty()?.with_status(204))
         }
         None => with_cors(Response::error("Not found", 404)?),
@@ -560,7 +575,8 @@ footer a:hover { text-decoration: underline; }
 "#;
 
 fn viewer_js(blob_id: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
 const BLOB_ID = "{blob_id}";
 
 // Minimal markdown parser with table support
@@ -774,5 +790,6 @@ async function decompress(data) {{
 }}
 
 main();
-"#)
+"#
+    )
 }

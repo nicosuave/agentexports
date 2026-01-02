@@ -1,7 +1,7 @@
 //! Shares management command implementation.
 
-use anyhow::{bail, Result};
-use dialoguer::{theme::ColorfulTheme, Select};
+use anyhow::{Result, bail};
+use dialoguer::{Select, theme::ColorfulTheme};
 use time::format_description;
 
 use agentexport::shares::{self, Share};
@@ -28,7 +28,11 @@ fn list_shares() -> Result<()> {
     let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]")?;
 
     for share in shares {
-        let status = if share.is_expired() { "expired" } else { "active" };
+        let status = if share.is_expired() {
+            "expired"
+        } else {
+            "active"
+        };
         let created = share.created_at.format(&format).unwrap_or_default();
         println!(
             "{} [{}] {} - {} ({})",
@@ -112,9 +116,22 @@ fn interactive() -> Result<()> {
         println!("ID:         {}", share.id);
         println!("URL:        {}", share.url());
         println!("Tool:       {}", share.tool);
-        println!("Created:    {}", share.created_at.format(&format).unwrap_or_default());
-        println!("Expires:    {}", share.expires_at.format(&format).unwrap_or_default());
-        println!("Status:     {}", if share.is_expired() { "EXPIRED" } else { "active" });
+        println!(
+            "Created:    {}",
+            share.created_at.format(&format).unwrap_or_default()
+        );
+        println!(
+            "Expires:    {}",
+            share.expires_at.format(&format).unwrap_or_default()
+        );
+        println!(
+            "Status:     {}",
+            if share.is_expired() {
+                "EXPIRED"
+            } else {
+                "active"
+            }
+        );
         println!("Transcript: {}", share.transcript_path);
         println!();
 
@@ -134,9 +151,7 @@ fn interactive() -> Result<()> {
                 // Open in browser
                 #[cfg(target_os = "macos")]
                 {
-                    let _ = std::process::Command::new("open")
-                        .arg(share.url())
-                        .spawn();
+                    let _ = std::process::Command::new("open").arg(share.url()).spawn();
                 }
                 #[cfg(target_os = "linux")]
                 {

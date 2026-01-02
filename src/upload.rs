@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use anyhow::{bail, Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use anyhow::{Context, Result, bail};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -31,13 +31,19 @@ pub fn compute_key_hash(key_b64: &str) -> String {
 }
 
 /// Upload encrypted blob to worker, return upload result with all metadata
-pub fn upload_blob(upload_url: &str, blob: &[u8], key_b64: &str) -> Result<UploadResult> {
+pub fn upload_blob(
+    upload_url: &str,
+    blob: &[u8],
+    key_b64: &str,
+    ttl_days: u64,
+) -> Result<UploadResult> {
     let endpoint = format!("{}/upload", upload_url.trim_end_matches('/'));
     let key_hash = compute_key_hash(key_b64);
 
     let response = ureq::post(&endpoint)
         .set("Content-Type", "application/octet-stream")
         .set("X-Key-Hash", &key_hash)
+        .set("X-TTL-Days", &ttl_days.to_string())
         .send_bytes(blob)
         .context("Failed to upload blob")?;
 
@@ -122,7 +128,10 @@ mod tests {
         let key = "SGVsbG8gV29ybGQ";
 
         let url = format!("{}/v/{}#{}", base.trim_end_matches('/'), id, key);
-        assert_eq!(url, "https://agentexports.com/v/abc123def456#SGVsbG8gV29ybGQ");
+        assert_eq!(
+            url,
+            "https://agentexports.com/v/abc123def456#SGVsbG8gV29ybGQ"
+        );
     }
 
     #[test]
@@ -132,6 +141,9 @@ mod tests {
         let key = "SGVsbG8gV29ybGQ";
 
         let url = format!("{}/v/{}#{}", base.trim_end_matches('/'), id, key);
-        assert_eq!(url, "https://agentexports.com/v/abc123def456#SGVsbG8gV29ybGQ");
+        assert_eq!(
+            url,
+            "https://agentexports.com/v/abc123def456#SGVsbG8gV29ybGQ"
+        );
     }
 }

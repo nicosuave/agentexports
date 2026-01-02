@@ -3,8 +3,8 @@
 //! These tests require a running worker at localhost:8787.
 //! Run with: cargo test --test e2e -- --ignored
 
-use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -13,8 +13,8 @@ use std::io::Read;
 #[test]
 #[ignore] // Requires running worker
 fn test_e2e_roundtrip() {
-    let worker_url = std::env::var("WORKER_URL")
-        .unwrap_or_else(|_| "http://localhost:8787".to_string());
+    let worker_url =
+        std::env::var("WORKER_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
     // Create test HTML content
     let test_html = r#"<!DOCTYPE html>
@@ -41,7 +41,11 @@ fn test_e2e_roundtrip() {
         .send_bytes(&encrypted.blob)
         .expect("upload failed");
 
-    assert!(response.status() < 400, "Upload failed with status {}", response.status());
+    assert!(
+        response.status() < 400,
+        "Upload failed with status {}",
+        response.status()
+    );
 
     let upload_response: serde_json::Value = response.into_json().expect("parse response");
     let id = upload_response["id"].as_str().expect("missing id");
@@ -50,21 +54,24 @@ fn test_e2e_roundtrip() {
 
     // Fetch blob back
     let blob_url = format!("{}/blob/{}", worker_url, id);
-    let response = ureq::get(&blob_url)
-        .call()
-        .expect("fetch blob failed");
+    let response = ureq::get(&blob_url).call().expect("fetch blob failed");
 
     assert_eq!(response.status(), 200);
 
     let mut fetched_blob = Vec::new();
-    response.into_reader().read_to_end(&mut fetched_blob).expect("read blob");
+    response
+        .into_reader()
+        .read_to_end(&mut fetched_blob)
+        .expect("read blob");
 
     println!("Fetched blob size: {} bytes", fetched_blob.len());
-    assert_eq!(fetched_blob, encrypted.blob, "Fetched blob doesn't match uploaded");
+    assert_eq!(
+        fetched_blob, encrypted.blob,
+        "Fetched blob doesn't match uploaded"
+    );
 
     // Decrypt
-    let decrypted = decrypt_blob(&fetched_blob, &encrypted.key_b64)
-        .expect("decryption failed");
+    let decrypted = decrypt_blob(&fetched_blob, &encrypted.key_b64).expect("decryption failed");
 
     println!("Decrypted size: {} bytes", decrypted.len());
 
@@ -81,8 +88,8 @@ fn test_e2e_roundtrip() {
 #[test]
 #[ignore]
 fn test_viewer_page_served() {
-    let worker_url = std::env::var("WORKER_URL")
-        .unwrap_or_else(|_| "http://localhost:8787".to_string());
+    let worker_url =
+        std::env::var("WORKER_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
     // First upload something
     let test_html = "<html><body>test</body></html>";
@@ -116,11 +123,10 @@ fn test_viewer_page_served() {
 #[test]
 #[ignore]
 fn test_blob_not_found() {
-    let worker_url = std::env::var("WORKER_URL")
-        .unwrap_or_else(|_| "http://localhost:8787".to_string());
+    let worker_url =
+        std::env::var("WORKER_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
-    let response = ureq::get(&format!("{}/blob/0000000000000000", worker_url))
-        .call();
+    let response = ureq::get(&format!("{}/blob/0000000000000000", worker_url)).call();
 
     match response {
         Err(ureq::Error::Status(404, _)) => println!("✓ 404 test PASSED!"),
@@ -132,8 +138,8 @@ fn test_blob_not_found() {
 #[test]
 #[ignore]
 fn test_delete_with_key_hash() {
-    let worker_url = std::env::var("WORKER_URL")
-        .unwrap_or_else(|_| "http://localhost:8787".to_string());
+    let worker_url =
+        std::env::var("WORKER_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
     // Upload a blob
     let test_html = "<html><body>delete test</body></html>";
@@ -186,8 +192,8 @@ fn test_delete_with_key_hash() {
 #[test]
 #[ignore]
 fn test_delete_requires_key_hash() {
-    let worker_url = std::env::var("WORKER_URL")
-        .unwrap_or_else(|_| "http://localhost:8787".to_string());
+    let worker_url =
+        std::env::var("WORKER_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
     // Upload a blob
     let test_html = "<html><body>auth test</body></html>";
@@ -218,7 +224,7 @@ struct EncryptionResult {
 }
 
 fn encrypt_html(html: &str) -> Result<EncryptionResult, Box<dyn std::error::Error>> {
-    use flate2::{write::GzEncoder, Compression};
+    use flate2::{Compression, write::GzEncoder};
     use rand::RngCore;
     use std::io::Write;
 
@@ -236,7 +242,8 @@ fn encrypt_html(html: &str) -> Result<EncryptionResult, Box<dyn std::error::Erro
     // Encrypt
     let cipher = Aes256Gcm::new_from_slice(&key_bytes)?;
     let nonce = Nonce::from_slice(&iv_bytes);
-    let ciphertext = cipher.encrypt(nonce, compressed.as_slice())
+    let ciphertext = cipher
+        .encrypt(nonce, compressed.as_slice())
         .map_err(|e| format!("encryption failed: {}", e))?;
 
     // Combine IV + ciphertext
@@ -258,7 +265,8 @@ fn decrypt_blob(blob: &[u8], key_b64: &str) -> Result<String, Box<dyn std::error
 
     let cipher = Aes256Gcm::new_from_slice(&key_bytes)?;
     let nonce = Nonce::from_slice(iv);
-    let compressed = cipher.decrypt(nonce, ciphertext)
+    let compressed = cipher
+        .decrypt(nonce, ciphertext)
         .map_err(|e| format!("decryption failed: {}", e))?;
 
     let mut decoder = GzDecoder::new(&compressed[..]);

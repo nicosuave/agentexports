@@ -4,11 +4,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use agentexport::{
-    PublishOptions,
-    Tool,
-    handle_claude_sessionstart,
-    publish,
-    setup_skills_interactive,
+    PublishOptions, Tool, handle_claude_sessionstart, publish, setup_skills_interactive,
 };
 
 mod shares_cmd;
@@ -48,6 +44,9 @@ enum Commands {
         no_upload: bool,
         #[arg(long)]
         render: bool,
+        /// TTL for the share: 30, 60, 90, 180, 365, or 0 for forever (default: 30)
+        #[arg(long, default_value_t = 30)]
+        ttl: u64,
     },
     #[command(name = "setup-skills")]
     SetupSkills,
@@ -95,6 +94,7 @@ fn run() -> Result<()> {
             upload_url,
             no_upload,
             render,
+            ttl,
         } => {
             let effective_upload_url = if no_upload { None } else { Some(upload_url) };
             let has_upload_url = effective_upload_url.is_some();
@@ -107,6 +107,7 @@ fn run() -> Result<()> {
                 dry_run,
                 upload_url: effective_upload_url,
                 render,
+                ttl_days: ttl,
             })?;
 
             // When uploading, print just the share URL to stdout (for piping)

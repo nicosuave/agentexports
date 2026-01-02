@@ -10,6 +10,3 @@ command = "cargo install -q worker-build && worker-build --release"
 [[r2_buckets]]
 binding = "TRANSCRIPTS"
 bucket_name = "agent-exports"
-
-[vars]
-TTL_DAYS = "30"

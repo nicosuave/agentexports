@@ -89,7 +89,10 @@ fn install_claude_skill() -> Result<()> {
     let dest_dir = ensure_claude_skills_dir()?.join("agentexport");
     let dest = dest_dir.join("SKILL.md");
     if dest.exists() {
-        println!("Skipping Claude skill (already installed at {}).", dest.display());
+        println!(
+            "Skipping Claude skill (already installed at {}).",
+            dest.display()
+        );
         return Ok(());
     }
     fs::create_dir_all(&dest_dir)?;
@@ -106,7 +109,10 @@ fn install_codex_prompt() -> Result<()> {
     let dest_dir = ensure_codex_prompts_dir()?;
     let dest = dest_dir.join("agentexport.md");
     if dest.exists() {
-        println!("Skipping Codex prompt (already installed at {}).", dest.display());
+        println!(
+            "Skipping Codex prompt (already installed at {}).",
+            dest.display()
+        );
         return Ok(());
     }
     fs::create_dir_all(&dest_dir)?;
@@ -124,7 +130,10 @@ fn install_claude_hook() -> Result<()> {
     fs::create_dir_all(&hooks_dir)?;
     let dest = hooks_dir.join(CLAUDE_HOOK_NAME);
     if dest.exists() {
-        println!("Skipping Claude hook (already installed at {}).", dest.display());
+        println!(
+            "Skipping Claude hook (already installed at {}).",
+            dest.display()
+        );
         return Ok(());
     }
     fs::copy(&source, &dest)?;
@@ -144,7 +153,9 @@ fn ensure_claude_sessionstart_config() -> Result<()> {
 
     let mut changed = false;
     let root_obj = ensure_object(&mut root);
-    let hooks_value = root_obj.entry("hooks").or_insert_with(|| Value::Object(Map::new()));
+    let hooks_value = root_obj
+        .entry("hooks")
+        .or_insert_with(|| Value::Object(Map::new()));
     let hooks_obj = ensure_object(hooks_value);
     let session_value = hooks_obj
         .entry("SessionStart")
@@ -157,7 +168,9 @@ fn ensure_claude_sessionstart_config() -> Result<()> {
     let entry_index = find_or_create_session_entry(session_arr);
     let entry_value = &mut session_arr[entry_index];
     let entry_obj = ensure_object(entry_value);
-    let hooks_list = entry_obj.entry("hooks").or_insert_with(|| Value::Array(Vec::new()));
+    let hooks_list = entry_obj
+        .entry("hooks")
+        .or_insert_with(|| Value::Array(Vec::new()));
     if !hooks_list.is_array() {
         *hooks_list = Value::Array(Vec::new());
     }

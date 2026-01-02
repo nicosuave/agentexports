@@ -69,6 +69,7 @@ pub struct PublishOptions {
     pub dry_run: bool,
     pub upload_url: Option<String>,
     pub render: bool,
+    pub ttl_days: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,7 +178,11 @@ pub fn claude_state_path(term_key: &str) -> Result<PathBuf> {
     Ok(state_dir(Tool::Claude)?.join(format!("{term_key}.json")))
 }
 
-pub fn compute_term_key(tty: &str, tmux_pane: Option<&str>, iterm_session_id: Option<&str>) -> String {
+pub fn compute_term_key(
+    tty: &str,
+    tmux_pane: Option<&str>,
+    iterm_session_id: Option<&str>,
+) -> String {
     let tmux = tmux_pane.unwrap_or("");
     let iterm = iterm_session_id.unwrap_or("");
     let input = format!("{tty}|{tmux}|{iterm}");
@@ -321,7 +326,8 @@ pub fn handle_claude_sessionstart(input: &str) -> Result<ClaudeState> {
     let transcript_path =
         extract_string_field(&value, &["transcript_path", "transcriptPath", "transcript"])
             .context("missing transcript_path")?;
-    let cwd = extract_string_field(&value, &["cwd", "working_dir", "workingDir"]).unwrap_or_default();
+    let cwd =
+        extract_string_field(&value, &["cwd", "working_dir", "workingDir"]).unwrap_or_default();
     let term_key = current_term_key()?;
     let state = ClaudeState {
         term_key: term_key.clone(),
@@ -350,8 +356,8 @@ pub fn write_claude_state(state: &ClaudeState) -> Result<PathBuf> {
 
 pub fn read_claude_state(term_key: &str) -> Result<ClaudeState> {
     let path = claude_state_path(term_key)?;
-    let data = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let data =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
     let state = serde_json::from_str(&data)?;
     Ok(state)
 }
@@ -427,8 +433,8 @@ fn is_interactive_originator(originator: Option<&str>) -> bool {
 }
 
 fn validate_transcript_fresh(path: &Path, max_age_minutes: u64) -> Result<(u64, u64)> {
-    let meta = fs::metadata(path)
-        .with_context(|| format!("missing transcript: {}", path.display()))?;
+    let meta =
+        fs::metadata(path).with_context(|| format!("missing transcript: {}", path.display()))?;
     if !meta.is_file() {
         bail!("transcript is not a file: {}", path.display());
     }
@@ -497,7 +503,15 @@ fn format_generated_at_nice() -> String {
     } else {
         (hour - 12, "pm")
     };
-    format!("{} {}, {} {}:{:02}{}", month, now.day(), now.year(), hour12, minute, ampm)
+    format!(
+        "{} {}, {} {}:{:02}{}",
+        month,
+        now.day(),
+        now.year(),
+        hour12,
+        minute,
+        ampm
+    )
 }
 
 fn truncate(input: &str, max_chars: usize) -> String {
@@ -740,13 +754,7 @@ fn extract_content(value: &Value) -> Option<String> {
             return Some(text);
         }
     }
-    for key in [
-        "text",
-        "delta",
-        "output_text",
-        "input_text",
-        "message_text",
-    ] {
+    for key in ["text", "delta", "output_text", "input_text", "message_text"] {
         if let Some(value) = value.get(key) {
             if let Some(text) = extract_text(value, 0) {
                 return Some(text);
@@ -766,7 +774,10 @@ fn extract_content(value: &Value) -> Option<String> {
     if let Some(tool_calls) = value.get("tool_calls") {
         return Some(format_tool_calls(tool_calls));
     }
-    if let Some(tool_call) = value.get("tool_call").or_else(|| value.get("function_call")) {
+    if let Some(tool_call) = value
+        .get("tool_call")
+        .or_else(|| value.get("function_call"))
+    {
         return Some(format_tool_call(tool_call));
     }
     None
@@ -827,7 +838,9 @@ fn extract_transcript_meta(path: &Path) -> TranscriptMeta {
                 || value.pointer("/message/role").and_then(|v| v.as_str()) == Some("user")
                 || value.get("role").and_then(|v| v.as_str()) == Some("user");
             if is_user {
-                if let Some(content) = value.pointer("/message/content").and_then(|v| v.as_str())
+                if let Some(content) = value
+                    .pointer("/message/content")
+                    .and_then(|v| v.as_str())
                     .or_else(|| value.get("content").and_then(|v| v.as_str()))
                 {
                     let trimmed = content.trim();
@@ -897,14 +910,21 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
 
         // Detect Codex mode
         if event_type == "session_meta" {
-            if value.pointer("/payload/originator").and_then(|v| v.as_str()) == Some("codex_cli_rs") {
+            if value
+                .pointer("/payload/originator")
+                .and_then(|v| v.as_str())
+                == Some("codex_cli_rs")
+            {
                 codex_mode = true;
             }
             continue;
         }
 
         // Skip internal events
-        if matches!(event_type, "file-history-snapshot" | "event_msg" | "summary" | "queue-operation") {
+        if matches!(
+            event_type,
+            "file-history-snapshot" | "event_msg" | "summary" | "queue-operation"
+        ) {
             continue;
         }
 
@@ -924,7 +944,9 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
             if let Some(payload) = value.get("payload") {
                 let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 if payload_type == "message" {
-                    let role = payload.get("role").and_then(|v| v.as_str())
+                    let role = payload
+                        .get("role")
+                        .and_then(|v| v.as_str())
                         .map(normalize_role)
                         .unwrap_or_else(|| "assistant".to_string());
                     let content = extract_content(payload).unwrap_or_default();
@@ -934,12 +956,23 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                             *result.model_counts.entry(m.clone()).or_insert(0) += 1;
                         }
                         result.messages.push(RenderedMessage {
-                            role, content, raw: None, raw_label: None, tool_use_id: None, model,
+                            role,
+                            content,
+                            raw: None,
+                            raw_label: None,
+                            tool_use_id: None,
+                            model,
                         });
                     }
                 } else if payload_type == "function_call" {
-                    let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
-                    let call_id = payload.get("call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let name = payload
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tool");
+                    let call_id = payload
+                        .get("call_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let args = payload.get("arguments");
                     let content = if let Some(a) = args {
                         let pretty = serde_json::to_string_pretty(a).unwrap_or_default();
@@ -947,26 +980,50 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                     } else {
                         name.to_string()
                     };
-                    let raw = serde_json::to_string_pretty(payload).ok().map(|t| truncate(&t, 20000));
+                    let raw = serde_json::to_string_pretty(payload)
+                        .ok()
+                        .map(|t| truncate(&t, 20000));
                     result.messages.push(RenderedMessage {
-                        role: "tool".to_string(), content, raw,
-                        raw_label: Some("Results".to_string()), tool_use_id: call_id, model: None,
+                        role: "tool".to_string(),
+                        content,
+                        raw,
+                        raw_label: Some("Results".to_string()),
+                        tool_use_id: call_id,
+                        model: None,
                     });
                 } else if payload_type == "function_call_output" {
-                    let call_id = payload.get("call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let output = payload.get("output").and_then(|v| v.as_str()).unwrap_or("[output]");
+                    let call_id = payload
+                        .get("call_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let output = payload
+                        .get("output")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("[output]");
                     result.messages.push(RenderedMessage {
                         role: "tool".to_string(),
                         content: truncate(output, 500),
-                        raw: None, raw_label: None, tool_use_id: call_id, model: None,
+                        raw: None,
+                        raw_label: None,
+                        tool_use_id: call_id,
+                        model: None,
                     });
                 } else if is_tool_payload(payload) {
                     let content = tool_summary(payload);
-                    let raw = serde_json::to_string_pretty(payload).ok().map(|t| truncate(&t, 20000));
-                    let tool_id = payload.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let raw = serde_json::to_string_pretty(payload)
+                        .ok()
+                        .map(|t| truncate(&t, 20000));
+                    let tool_id = payload
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     result.messages.push(RenderedMessage {
-                        role: "tool".to_string(), content, raw,
-                        raw_label: Some("Tool payload".to_string()), tool_use_id: tool_id, model: None,
+                        role: "tool".to_string(),
+                        content,
+                        raw,
+                        raw_label: Some("Tool payload".to_string()),
+                        tool_use_id: tool_id,
+                        model: None,
                     });
                 }
             }
@@ -998,19 +1055,27 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                     result.messages.push(RenderedMessage {
                         role: role.to_string(),
                         content: content.to_string(),
-                        raw: None, raw_label: None, tool_use_id: None, model: None,
+                        raw: None,
+                        raw_label: None,
+                        tool_use_id: None,
+                        model: None,
                     });
                 }
             }
             "assistant" => {
                 // Extract model from message.model
-                let model = value.pointer("/message/model").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let model = value
+                    .pointer("/message/model")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 if let Some(ref m) = model {
                     *result.model_counts.entry(m.clone()).or_insert(0) += 1;
                 }
 
                 // Assistant message: message.content is array of blocks
-                if let Some(content_arr) = value.pointer("/message/content").and_then(|v| v.as_array()) {
+                if let Some(content_arr) =
+                    value.pointer("/message/content").and_then(|v| v.as_array())
+                {
                     for block in content_arr {
                         let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
                         match block_type {
@@ -1020,39 +1085,58 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                                         result.messages.push(RenderedMessage {
                                             role: "assistant".to_string(),
                                             content: text.to_string(),
-                                            raw: None, raw_label: None, tool_use_id: None,
+                                            raw: None,
+                                            raw_label: None,
+                                            tool_use_id: None,
                                             model: model.clone(),
                                         });
                                     }
                                 }
                             }
                             "tool_use" => {
-                                let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
-                                let tool_id = block.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                let name =
+                                    block.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                                let tool_id = block
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
                                 let input = block.get("input");
                                 let content = if let Some(inp) = input {
-                                    let pretty = serde_json::to_string_pretty(inp).unwrap_or_default();
+                                    let pretty =
+                                        serde_json::to_string_pretty(inp).unwrap_or_default();
                                     format!("{}\n{}", name, truncate(&pretty, 2000))
                                 } else {
                                     name.to_string()
                                 };
-                                let raw = serde_json::to_string_pretty(block).ok().map(|t| truncate(&t, 20000));
+                                let raw = serde_json::to_string_pretty(block)
+                                    .ok()
+                                    .map(|t| truncate(&t, 20000));
                                 result.messages.push(RenderedMessage {
                                     role: "tool".to_string(),
                                     content,
-                                    raw, raw_label: Some("Results".to_string()), tool_use_id: tool_id,
+                                    raw,
+                                    raw_label: Some("Results".to_string()),
+                                    tool_use_id: tool_id,
                                     model: None,
                                 });
                             }
                             "tool_result" => {
-                                let tool_id = block.get("tool_use_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                let content = block.get("content").and_then(|v| v.as_str())
+                                let tool_id = block
+                                    .get("tool_use_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let content = block
+                                    .get("content")
+                                    .and_then(|v| v.as_str())
                                     .or_else(|| block.get("output").and_then(|v| v.as_str()))
                                     .unwrap_or("[result]");
                                 result.messages.push(RenderedMessage {
                                     role: "tool".to_string(),
                                     content: truncate(content, 500),
-                                    raw: None, raw_label: None, tool_use_id: tool_id, model: None,
+                                    raw: None,
+                                    raw_label: None,
+                                    tool_use_id: tool_id,
+                                    model: None,
                                 });
                             }
                             // Skip "thinking" blocks
@@ -1087,7 +1171,8 @@ fn create_share_payload(
         Tool::Codex => "Codex",
     };
 
-    let title = meta.title
+    let title = meta
+        .title
         .or(meta.slug.map(|s| s.replace('-', " ")))
         .or(meta.first_user_message);
 
@@ -1164,7 +1249,9 @@ fn resolve_codex_transcript(
         return Ok((path, Some(thread_id)));
     }
 
-    bail!("unable to resolve codex transcript from history; ensure history is enabled and run from the Codex session cwd, or pass --transcript");
+    bail!(
+        "unable to resolve codex transcript from history; ensure history is enabled and run from the Codex session cwd, or pass --transcript"
+    );
 }
 
 fn find_codex_transcript_for_cwd_from_history(
@@ -1302,11 +1389,7 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
         Some(path) => path,
         None => default_gzip_path(options.tool, &term_key)?,
     };
-    fs::create_dir_all(
-        gzip_path
-            .parent()
-            .unwrap_or_else(|| Path::new(".")),
-    )?;
+    fs::create_dir_all(gzip_path.parent().unwrap_or_else(|| Path::new(".")))?;
     gzip_to_file(&transcript_path, &gzip_path)?;
     let gzip_bytes = fs::metadata(&gzip_path)?.len();
 
@@ -1324,11 +1407,7 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
         // Only write to disk if --render was explicitly requested
         let path = if options.render {
             let render_path = default_render_path(options.tool, &term_key)?;
-            fs::create_dir_all(
-                render_path
-                    .parent()
-                    .unwrap_or_else(|| Path::new(".")),
-            )?;
+            fs::create_dir_all(render_path.parent().unwrap_or_else(|| Path::new(".")))?;
             // Write JSON for local preview (can be viewed with a local viewer)
             fs::write(&render_path, &json)?;
             Some(render_path.display().to_string())
@@ -1346,7 +1425,12 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
     } else if let Some(upload_url) = &options.upload_url {
         let json = payload_json.expect("Payload should be created for upload");
         let encrypted = crypto::encrypt_html(&json)?;
-        let result = upload::upload_blob(upload_url, &encrypted.blob, &encrypted.key_b64)?;
+        let result = upload::upload_blob(
+            upload_url,
+            &encrypted.blob,
+            &encrypted.key_b64,
+            options.ttl_days,
+        )?;
 
         // Save share locally for management
         let share = shares::Share {
@@ -1387,12 +1471,14 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::sync::{Mutex, OnceLock};
+    use tempfile::TempDir;
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     struct EnvGuard {
@@ -1424,7 +1510,10 @@ mod tests {
             unsafe {
                 std::env::set_var(key, value);
             }
-            Self { key: key.to_string(), old }
+            Self {
+                key: key.to_string(),
+                old,
+            }
         }
 
         fn clear(key: &str) -> Self {
@@ -1432,7 +1521,10 @@ mod tests {
             unsafe {
                 std::env::remove_var(key);
             }
-            Self { key: key.to_string(), old }
+            Self {
+                key: key.to_string(),
+                old,
+            }
         }
     }
 
@@ -1498,7 +1590,10 @@ mod tests {
     fn find_codex_transcript_for_cwd_from_history_prefers_latest_session() {
         let _lock = env_lock();
         let tmp = TempDir::new().unwrap();
-        let _guard_sessions = EnvGuard::set("AGENTEXPORT_CODEX_SESSIONS_DIR", tmp.path().to_str().unwrap());
+        let _guard_sessions = EnvGuard::set(
+            "AGENTEXPORT_CODEX_SESSIONS_DIR",
+            tmp.path().to_str().unwrap(),
+        );
         let _guard_home = EnvGuard::set("CODEX_HOME", tmp.path().to_str().unwrap());
 
         let first = tmp.path().join("first.jsonl");
@@ -1554,6 +1649,7 @@ mod tests {
             dry_run: true,
             upload_url: None,
             render: true,
+            ttl_days: 30,
         })
         .unwrap();
 
@@ -1594,6 +1690,7 @@ mod tests {
             dry_run: true,
             upload_url: None,
             render: false,
+            ttl_days: 30,
         })
         .unwrap();
 
@@ -1611,8 +1708,10 @@ mod tests {
         fs::create_dir_all(&cwd).unwrap();
         let cwd = fs::canonicalize(&cwd).unwrap();
 
-        let _guard_sessions =
-            EnvGuard::set("AGENTEXPORT_CODEX_SESSIONS_DIR", sessions_dir.to_str().unwrap());
+        let _guard_sessions = EnvGuard::set(
+            "AGENTEXPORT_CODEX_SESSIONS_DIR",
+            sessions_dir.to_str().unwrap(),
+        );
         let _guard_home = EnvGuard::set("CODEX_HOME", tmp.path().to_str().unwrap());
         let _dir_guard = DirGuard::set(&cwd).unwrap();
 
@@ -1643,6 +1742,7 @@ mod tests {
             dry_run: true,
             upload_url: None,
             render: false,
+            ttl_days: 30,
         })
         .unwrap();
 
@@ -1660,8 +1760,10 @@ mod tests {
         fs::create_dir_all(&cwd).unwrap();
         let cwd = fs::canonicalize(&cwd).unwrap();
 
-        let _guard_sessions =
-            EnvGuard::set("AGENTEXPORT_CODEX_SESSIONS_DIR", sessions_dir.to_str().unwrap());
+        let _guard_sessions = EnvGuard::set(
+            "AGENTEXPORT_CODEX_SESSIONS_DIR",
+            sessions_dir.to_str().unwrap(),
+        );
         let _guard_home = EnvGuard::set("CODEX_HOME", tmp.path().to_str().unwrap());
         let _dir_guard = DirGuard::set(&cwd).unwrap();
 
@@ -1684,12 +1786,14 @@ mod tests {
             dry_run: true,
             upload_url: None,
             render: false,
+            ttl_days: 30,
         })
         .unwrap_err();
 
-        assert!(err
-            .to_string()
-            .contains("unable to resolve codex transcript from history"));
+        assert!(
+            err.to_string()
+                .contains("unable to resolve codex transcript from history")
+        );
     }
 
     #[test]

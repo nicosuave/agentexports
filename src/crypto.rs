@@ -1,10 +1,10 @@
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
 };
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use flate2::{write::GzEncoder, Compression};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use flate2::{Compression, write::GzEncoder};
 use rand::RngCore;
 use std::io::Write;
 
@@ -32,8 +32,7 @@ pub fn encrypt_html(html: &str) -> Result<EncryptionResult> {
     let nonce = Nonce::from_slice(&iv_bytes);
 
     // Create cipher and encrypt
-    let cipher =
-        Aes256Gcm::new_from_slice(&key_bytes).context("Failed to create cipher")?;
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes).context("Failed to create cipher")?;
 
     let ciphertext = cipher
         .encrypt(nonce, compressed.as_slice())
