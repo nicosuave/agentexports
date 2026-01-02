@@ -348,14 +348,20 @@ fn homepage_html() -> String {
     function copyCmd(el) {
         const text = el.querySelector('code').textContent;
         const tip = el.querySelector('.tooltip');
-        navigator.clipboard.writeText(text).then(() => {
-            tip.textContent = 'Copied to clipboard';
-            tip.classList.add('copied');
-            setTimeout(() => {
-                tip.textContent = 'Click to copy';
-                tip.classList.remove('copied');
-            }, 2000);
-        });
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        tip.textContent = 'Copied to clipboard';
+        tip.classList.add('copied');
+        setTimeout(() => {
+            tip.textContent = 'Click to copy';
+            tip.classList.remove('copied');
+        }, 2000);
     }
     </script>
 
