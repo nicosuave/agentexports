@@ -1,7 +1,8 @@
 name = "agentexport-share"
 main = "build/worker/shim.mjs"
 compatibility_date = "2024-12-01"
-workers_dev = true
+workers_dev = false
+routes = [{ pattern = "agentexports.com", custom_domain = true }]
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
@@ -9,18 +10,6 @@ command = "cargo install -q worker-build && worker-build --release"
 [[r2_buckets]]
 binding = "TRANSCRIPTS"
 bucket_name = "agent-exports"
-preview_bucket_name = "agent-exports-dev"
 
 [vars]
 TTL_DAYS = "30"
-
-[env.production]
-workers_dev = false
-routes = [{ pattern = "agentexports.com", custom_domain = true }]
-
-[env.production.vars]
-TTL_DAYS = "30"
-
-[[env.production.r2_buckets]]
-binding = "TRANSCRIPTS"
-bucket_name = "agent-exports"

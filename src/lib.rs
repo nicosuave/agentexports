@@ -4,13 +4,13 @@ use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use time::{OffsetDateTime, format_description};
+use time::OffsetDateTime;
 use walkdir::WalkDir;
 
 mod crypto;
@@ -88,12 +88,43 @@ pub struct PublishResult {
     pub note: String,
 }
 
-#[derive(Debug, Clone)]
-struct RenderedMessage {
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderedMessage {
     role: String,
     content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     raw: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     raw_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_use_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TranscriptMeta {
+    title: Option<String>,
+    slug: Option<String>,
+    first_user_message: Option<String>,
+}
+
+/// Payload sent to the viewer (encrypted JSON)
+#[derive(Debug, Clone, Serialize)]
+pub struct SharePayload {
+    pub tool: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub shared_at: String,
+    /// Primary model (most used), shown in header
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// All models used, for "model1 + model2" display if multiple
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
+    pub messages: Vec<RenderedMessage>,
 }
 
 fn now_unix() -> u64 {
@@ -435,22 +466,38 @@ fn gzip_to_file(input: &Path, output: &Path) -> Result<u64> {
 fn default_render_path(tool: Tool, term_key: &str) -> Result<PathBuf> {
     let dir = cache_dir()?.join(APP_NAME).join("renders");
     fs::create_dir_all(&dir)?;
-    let filename = format!("{}-{}-{}.html", tool.as_str(), term_key, now_unix());
+    let filename = format!("{}-{}-{}.json", tool.as_str(), term_key, now_unix());
     Ok(dir.join(filename))
 }
 
-fn format_generated_at() -> String {
-    let fmt = format_description::parse(
-        "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory][offset_minute]",
-    )
-    .ok();
+fn format_generated_at_nice() -> String {
     let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
-    if let Some(fmt) = fmt {
-        if let Ok(text) = now.format(&fmt) {
-            return text;
-        }
-    }
-    now_unix().to_string()
+    let month = match now.month() {
+        time::Month::January => "Jan",
+        time::Month::February => "Feb",
+        time::Month::March => "Mar",
+        time::Month::April => "Apr",
+        time::Month::May => "May",
+        time::Month::June => "Jun",
+        time::Month::July => "Jul",
+        time::Month::August => "Aug",
+        time::Month::September => "Sep",
+        time::Month::October => "Oct",
+        time::Month::November => "Nov",
+        time::Month::December => "Dec",
+    };
+    let hour = now.hour();
+    let minute = now.minute();
+    let (hour12, ampm) = if hour == 0 {
+        (12, "am")
+    } else if hour < 12 {
+        (hour, "am")
+    } else if hour == 12 {
+        (12, "pm")
+    } else {
+        (hour - 12, "pm")
+    };
+    format!("{} {}, {} {}:{:02}{}", month, now.day(), now.year(), hour12, minute, ampm)
 }
 
 fn truncate(input: &str, max_chars: usize) -> String {
@@ -486,21 +533,6 @@ fn looks_like_internal_block(text: &str) -> bool {
         return true;
     }
     false
-}
-
-fn escape_html(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 fn normalize_role(role: &str) -> String {
@@ -753,11 +785,102 @@ fn summarize_event(value: &Value) -> Option<String> {
     None
 }
 
-fn parse_transcript(path: &Path) -> Result<Vec<RenderedMessage>> {
+fn extract_transcript_meta(path: &Path) -> TranscriptMeta {
+    let mut meta = TranscriptMeta::default();
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => return meta,
+    };
+    let reader = BufReader::new(file);
+
+    for line in reader.lines().take(100) {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Claude: look for summary type
+        if value.get("type").and_then(|v| v.as_str()) == Some("summary") {
+            if let Some(title) = value.get("summary").and_then(|v| v.as_str()) {
+                meta.title = Some(title.to_string());
+            }
+        }
+
+        // Claude: look for slug field on user messages
+        if meta.slug.is_none() {
+            if let Some(slug) = value.get("slug").and_then(|v| v.as_str()) {
+                meta.slug = Some(slug.to_string());
+            }
+        }
+
+        // Extract first user message content
+        if meta.first_user_message.is_none() {
+            let is_user = value.get("type").and_then(|v| v.as_str()) == Some("user")
+                || value.pointer("/message/role").and_then(|v| v.as_str()) == Some("user")
+                || value.get("role").and_then(|v| v.as_str()) == Some("user");
+            if is_user {
+                if let Some(content) = value.pointer("/message/content").and_then(|v| v.as_str())
+                    .or_else(|| value.get("content").and_then(|v| v.as_str()))
+                {
+                    let trimmed = content.trim();
+                    if !trimmed.is_empty() && !looks_like_internal_block(trimmed) {
+                        // Truncate to reasonable title length
+                        let title = if trimmed.len() > 100 {
+                            format!("{}...", &trimmed[..100])
+                        } else {
+                            trimmed.to_string()
+                        };
+                        meta.first_user_message = Some(title);
+                    }
+                }
+            }
+        }
+
+        // Stop early if we have what we need
+        if meta.title.is_some() && meta.first_user_message.is_some() {
+            break;
+        }
+    }
+
+    meta
+}
+
+/// Result of parsing a transcript
+#[derive(Debug, Default)]
+struct ParseResult {
+    messages: Vec<RenderedMessage>,
+    /// Model usage counts for determining dominant model
+    model_counts: HashMap<String, usize>,
+}
+
+impl ParseResult {
+    /// Get sorted list of models by usage (most used first)
+    fn models_by_usage(&self) -> Vec<String> {
+        let mut models: Vec<_> = self.model_counts.iter().collect();
+        models.sort_by(|a, b| b.1.cmp(a.1));
+        models.into_iter().map(|(k, _)| k.clone()).collect()
+    }
+
+    /// Get the dominant (most used) model
+    fn dominant_model(&self) -> Option<String> {
+        self.models_by_usage().into_iter().next()
+    }
+}
+
+fn parse_transcript(path: &Path) -> Result<ParseResult> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let mut messages = Vec::new();
+    let mut result = ParseResult::default();
     let mut codex_mode = false;
+    let mut current_model: Option<String> = None;
 
     for line in reader.lines() {
         let line = line?;
@@ -765,450 +888,220 @@ fn parse_transcript(path: &Path) -> Result<Vec<RenderedMessage>> {
         if trimmed.is_empty() {
             continue;
         }
-        match serde_json::from_str::<Value>(trimmed) {
-            Ok(value) => {
-                let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                if event_type == "session_meta" {
-                    if let Some(originator) = value
-                        .get("payload")
-                        .and_then(|p| p.get("originator"))
-                        .and_then(|v| v.as_str())
-                    {
-                        if originator == "codex_cli_rs" {
-                            codex_mode = true;
+        let value: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Detect Codex mode
+        if event_type == "session_meta" {
+            if value.pointer("/payload/originator").and_then(|v| v.as_str()) == Some("codex_cli_rs") {
+                codex_mode = true;
+            }
+            continue;
+        }
+
+        // Skip internal events
+        if matches!(event_type, "file-history-snapshot" | "event_msg" | "summary" | "queue-operation") {
+            continue;
+        }
+
+        // ===== CODEX FORMAT =====
+        if codex_mode {
+            // Track model from turn_context
+            if event_type == "turn_context" {
+                if let Some(model) = value.pointer("/model").and_then(|v| v.as_str()) {
+                    current_model = Some(model.to_string());
+                }
+                continue;
+            }
+
+            if event_type != "response_item" {
+                continue;
+            }
+            if let Some(payload) = value.get("payload") {
+                let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if payload_type == "message" {
+                    let role = payload.get("role").and_then(|v| v.as_str())
+                        .map(normalize_role)
+                        .unwrap_or_else(|| "assistant".to_string());
+                    let content = extract_content(payload).unwrap_or_default();
+                    if !content.trim().is_empty() && !looks_like_internal_block(&content) {
+                        let model = current_model.clone();
+                        if let Some(ref m) = model {
+                            *result.model_counts.entry(m.clone()).or_insert(0) += 1;
                         }
+                        result.messages.push(RenderedMessage {
+                            role, content, raw: None, raw_label: None, tool_use_id: None, model,
+                        });
                     }
-                    continue;
-                }
-                if event_type == "event_msg" {
-                    continue;
-                }
-                let payload = value.get("payload");
-                let primary = payload.unwrap_or(&value);
-
-                if codex_mode && event_type != "response_item" {
-                    continue;
-                }
-
-                if event_type == "response_item" {
-                    if let Some(payload) = payload {
-                        let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        if payload_type == "message" {
-                            let role = payload
-                                .get("role")
-                                .and_then(|v| v.as_str())
-                                .map(normalize_role)
-                                .unwrap_or_else(|| "assistant".to_string());
-                            let content = extract_content(payload).unwrap_or_default();
-                            if !content.trim().is_empty() && !looks_like_internal_block(&content) {
-                                messages.push(RenderedMessage {
-                                    role,
-                                    content,
-                                    raw: None,
-                                    raw_label: None,
-                                });
-                            }
-                            continue;
-                        }
-                        if is_tool_payload(payload) {
-                            let content = tool_summary(payload);
-                            let raw = serde_json::to_string_pretty(payload)
-                                .ok()
-                                .map(|text| truncate(&text, 20000));
-                            messages.push(RenderedMessage {
-                                role: "tool".to_string(),
-                                content,
-                                raw,
-                                raw_label: Some("Tool payload".to_string()),
-                            });
-                            continue;
-                        }
-                    }
-                    continue;
-                }
-
-                let role = extract_role(primary)
-                    .or_else(|| extract_role(&value))
-                    .unwrap_or_else(|| "event".to_string());
-                let mut content = extract_content(primary)
-                    .or_else(|| extract_content(&value))
-                    .unwrap_or_default();
-                let mut raw = None;
-                let mut raw_label = None;
-
-                if role == "tool" {
-                    content = tool_summary(primary);
-                    if let Ok(pretty) = serde_json::to_string_pretty(primary) {
-                        raw = Some(truncate(&pretty, 20000));
-                        raw_label = Some("Tool payload".to_string());
+                } else if payload_type == "function_call" {
+                    let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                    let call_id = payload.get("call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let args = payload.get("arguments");
+                    let content = if let Some(a) = args {
+                        let pretty = serde_json::to_string_pretty(a).unwrap_or_default();
+                        format!("{}\n{}", name, truncate(&pretty, 2000))
                     } else {
-                        raw = Some(truncate(trimmed, 8000));
-                        raw_label = Some("Tool payload".to_string());
-                    }
-                } else if content.trim().is_empty() {
-                    if let Some(summary) = summarize_event(primary)
-                        .or_else(|| summarize_event(&value))
-                    {
-                        content = summary;
-                    } else {
-                        content = "[unparsed event]".to_string();
-                    }
-                }
-
-                if raw.is_none() && (role == "event" || content == "[unparsed event]") {
-                    raw = Some(truncate(trimmed, 8000));
-                    raw_label = Some("Raw event".to_string());
-                }
-
-                if !looks_like_internal_block(&content) {
-                    messages.push(RenderedMessage {
-                        role,
-                        content,
-                        raw,
-                        raw_label,
+                        name.to_string()
+                    };
+                    let raw = serde_json::to_string_pretty(payload).ok().map(|t| truncate(&t, 20000));
+                    result.messages.push(RenderedMessage {
+                        role: "tool".to_string(), content, raw,
+                        raw_label: Some("Results".to_string()), tool_use_id: call_id, model: None,
+                    });
+                } else if payload_type == "function_call_output" {
+                    let call_id = payload.get("call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let output = payload.get("output").and_then(|v| v.as_str()).unwrap_or("[output]");
+                    result.messages.push(RenderedMessage {
+                        role: "tool".to_string(),
+                        content: truncate(output, 500),
+                        raw: None, raw_label: None, tool_use_id: call_id, model: None,
+                    });
+                } else if is_tool_payload(payload) {
+                    let content = tool_summary(payload);
+                    let raw = serde_json::to_string_pretty(payload).ok().map(|t| truncate(&t, 20000));
+                    let tool_id = payload.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    result.messages.push(RenderedMessage {
+                        role: "tool".to_string(), content, raw,
+                        raw_label: Some("Tool payload".to_string()), tool_use_id: tool_id, model: None,
                     });
                 }
             }
-            Err(_) => {
-                messages.push(RenderedMessage {
-                    role: "event".to_string(),
-                    content: trimmed.to_string(),
-                    raw: None,
-                    raw_label: None,
-                });
+            continue;
+        }
+
+        // ===== CLAUDE FORMAT =====
+        match event_type {
+            "user" => {
+                // User message: message.content is a string
+                if let Some(content) = value.pointer("/message/content").and_then(|v| v.as_str()) {
+                    // Skip internal/system messages
+                    if content.starts_with("Caveat:")
+                        || content.starts_with("Unknown slash command:")
+                        || content.starts_with("This slash command can only be invoked")
+                        || content.trim().is_empty()
+                        || looks_like_internal_block(content)
+                    {
+                        continue;
+                    }
+                    // Compaction/summary messages should be system role (hidden with tool calls)
+                    let role = if content.contains("conversation is summarized below")
+                        || content.contains("continued from a previous conversation")
+                    {
+                        "system"
+                    } else {
+                        "user"
+                    };
+                    result.messages.push(RenderedMessage {
+                        role: role.to_string(),
+                        content: content.to_string(),
+                        raw: None, raw_label: None, tool_use_id: None, model: None,
+                    });
+                }
+            }
+            "assistant" => {
+                // Extract model from message.model
+                let model = value.pointer("/message/model").and_then(|v| v.as_str()).map(|s| s.to_string());
+                if let Some(ref m) = model {
+                    *result.model_counts.entry(m.clone()).or_insert(0) += 1;
+                }
+
+                // Assistant message: message.content is array of blocks
+                if let Some(content_arr) = value.pointer("/message/content").and_then(|v| v.as_array()) {
+                    for block in content_arr {
+                        let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        match block_type {
+                            "text" => {
+                                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                                    if !text.trim().is_empty() {
+                                        result.messages.push(RenderedMessage {
+                                            role: "assistant".to_string(),
+                                            content: text.to_string(),
+                                            raw: None, raw_label: None, tool_use_id: None,
+                                            model: model.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                            "tool_use" => {
+                                let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                                let tool_id = block.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                let input = block.get("input");
+                                let content = if let Some(inp) = input {
+                                    let pretty = serde_json::to_string_pretty(inp).unwrap_or_default();
+                                    format!("{}\n{}", name, truncate(&pretty, 2000))
+                                } else {
+                                    name.to_string()
+                                };
+                                let raw = serde_json::to_string_pretty(block).ok().map(|t| truncate(&t, 20000));
+                                result.messages.push(RenderedMessage {
+                                    role: "tool".to_string(),
+                                    content,
+                                    raw, raw_label: Some("Results".to_string()), tool_use_id: tool_id,
+                                    model: None,
+                                });
+                            }
+                            "tool_result" => {
+                                let tool_id = block.get("tool_use_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                let content = block.get("content").and_then(|v| v.as_str())
+                                    .or_else(|| block.get("output").and_then(|v| v.as_str()))
+                                    .unwrap_or("[result]");
+                                result.messages.push(RenderedMessage {
+                                    role: "tool".to_string(),
+                                    content: truncate(content, 500),
+                                    raw: None, raw_label: None, tool_use_id: tool_id, model: None,
+                                });
+                            }
+                            // Skip "thinking" blocks
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            "system" => {
+                // System messages - skip most, they're internal
+            }
+            _ => {
+                // Unknown event type - skip
             }
         }
     }
 
-    Ok(messages)
+    Ok(result)
 }
 
-fn render_share_page(
+fn create_share_payload(
     tool: Tool,
-    term_key: &str,
     transcript_path: &Path,
     session_id: Option<&str>,
     thread_id: Option<&str>,
-    cwd: Option<&str>,
-) -> Result<String> {
-    let messages = parse_transcript(transcript_path)?;
-    let generated_at = format_generated_at();
-    let message_count = messages.len();
+) -> Result<SharePayload> {
+    let parsed = parse_transcript(transcript_path)?;
+    let meta = extract_transcript_meta(transcript_path);
 
-    let mut role_counts: BTreeMap<String, usize> = BTreeMap::new();
-    for message in &messages {
-        *role_counts.entry(message.role.clone()).or_insert(0) += 1;
-    }
-    let mut role_summary = String::new();
-    for (role, count) in role_counts {
-        if !role_summary.is_empty() {
-            role_summary.push_str(" | ");
-        }
-        role_summary.push_str(&format!("{role} {count}"));
-    }
+    let tool_display = match tool {
+        Tool::Claude => "Claude Code",
+        Tool::Codex => "Codex",
+    };
 
-    let file_name = transcript_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("transcript.jsonl");
+    let title = meta.title
+        .or(meta.slug.map(|s| s.replace('-', " ")))
+        .or(meta.first_user_message);
 
-    let mut meta_rows = Vec::new();
-    meta_rows.push(("tool", tool.as_str().to_string()));
-    meta_rows.push(("term key", term_key.to_string()));
-    if let Some(session_id) = session_id {
-        meta_rows.push(("session", session_id.to_string()));
-    }
-    if let Some(thread_id) = thread_id {
-        meta_rows.push(("thread", thread_id.to_string()));
-    }
-    if let Some(cwd) = cwd {
-        if !cwd.trim().is_empty() {
-            meta_rows.push(("cwd", cwd.to_string()));
-        }
-    }
-    meta_rows.push(("source", file_name.to_string()));
-    meta_rows.push(("generated", generated_at));
+    let models = parsed.models_by_usage();
 
-    let mut html = String::new();
-    html.push_str("<!doctype html>\n");
-    html.push_str("<html lang=\"en\">\n");
-    html.push_str("<head>\n");
-    html.push_str("  <meta charset=\"utf-8\" />\n");
-    html.push_str("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n");
-    html.push_str("  <title>Agent Export</title>\n");
-    html.push_str("  <style>\n");
-    html.push_str("    :root {\n");
-    html.push_str("      --ink: #1f1b18;\n");
-    html.push_str("      --muted: #6a625b;\n");
-    html.push_str("      --paper: #f8f3ee;\n");
-    html.push_str("      --panel: #fffaf4;\n");
-    html.push_str("      --accent: #c36b3d;\n");
-    html.push_str("      --accent-2: #2b7b6f;\n");
-    html.push_str("      --assistant: #ffffff;\n");
-    html.push_str("      --user: #ffe7d2;\n");
-    html.push_str("      --system: #e9f0fb;\n");
-    html.push_str("      --tool: #e6f6f0;\n");
-    html.push_str("      --event: #f2ede7;\n");
-    html.push_str("      --border: #e2d6cb;\n");
-    html.push_str("      --shadow: 0 16px 40px rgba(25, 20, 16, 0.08);\n");
-    html.push_str("      --radius: 18px;\n");
-    html.push_str("    }\n");
-    html.push_str("    * { box-sizing: border-box; }\n");
-    html.push_str("    body {\n");
-    html.push_str("      margin: 0;\n");
-    html.push_str("      font-family: \"Space Grotesk\", \"Avenir Next\", \"Segoe UI\", sans-serif;\n");
-    html.push_str("      color: var(--ink);\n");
-    html.push_str("      background:\n");
-    html.push_str("        radial-gradient(1200px 600px at 15% -10%, #fff3e6 0%, transparent 55%),\n");
-    html.push_str("        radial-gradient(900px 500px at 100% 10%, #e8f5f1 0%, transparent 50%),\n");
-    html.push_str("        linear-gradient(180deg, #f6efe7 0%, #fdf9f5 60%, #faf4ee 100%);\n");
-    html.push_str("      min-height: 100vh;\n");
-    html.push_str("    }\n");
-    html.push_str("    main {\n");
-    html.push_str("      max-width: 980px;\n");
-    html.push_str("      margin: 0 auto;\n");
-    html.push_str("      padding: 48px 24px 80px;\n");
-    html.push_str("    }\n");
-    html.push_str("    header.hero {\n");
-    html.push_str("      background: linear-gradient(135deg, rgba(255,255,255,0.92), rgba(255,248,241,0.95));\n");
-    html.push_str("      border: 1px solid var(--border);\n");
-    html.push_str("      border-radius: calc(var(--radius) + 6px);\n");
-    html.push_str("      box-shadow: var(--shadow);\n");
-    html.push_str("      padding: 28px 32px 24px;\n");
-    html.push_str("      position: relative;\n");
-    html.push_str("      overflow: hidden;\n");
-    html.push_str("    }\n");
-    html.push_str("    header.hero::after {\n");
-    html.push_str("      content: \"\";\n");
-    html.push_str("      position: absolute;\n");
-    html.push_str("      inset: -40% 60% auto -20%;\n");
-    html.push_str("      height: 220px;\n");
-    html.push_str("      background: radial-gradient(circle, rgba(195,107,61,0.18), transparent 70%);\n");
-    html.push_str("      pointer-events: none;\n");
-    html.push_str("    }\n");
-    html.push_str("    .title {\n");
-    html.push_str("      font-size: 32px;\n");
-    html.push_str("      letter-spacing: -0.02em;\n");
-    html.push_str("      margin: 0 0 6px;\n");
-    html.push_str("    }\n");
-    html.push_str("    .subtitle {\n");
-    html.push_str("      margin: 0;\n");
-    html.push_str("      color: var(--muted);\n");
-    html.push_str("      font-size: 15px;\n");
-    html.push_str("    }\n");
-    html.push_str("    .meta {\n");
-    html.push_str("      display: flex;\n");
-    html.push_str("      flex-wrap: wrap;\n");
-    html.push_str("      gap: 8px;\n");
-    html.push_str("      margin-top: 18px;\n");
-    html.push_str("    }\n");
-    html.push_str("    .chip {\n");
-    html.push_str("      display: inline-flex;\n");
-    html.push_str("      align-items: center;\n");
-    html.push_str("      gap: 8px;\n");
-    html.push_str("      padding: 6px 12px;\n");
-    html.push_str("      border-radius: 999px;\n");
-    html.push_str("      border: 1px solid var(--border);\n");
-    html.push_str("      background: rgba(255,255,255,0.72);\n");
-    html.push_str("      font-size: 12px;\n");
-    html.push_str("      color: var(--muted);\n");
-    html.push_str("    }\n");
-    html.push_str("    .chip strong { color: var(--ink); font-weight: 600; }\n");
-    html.push_str("    .stats {\n");
-    html.push_str("      margin: 28px 0 22px;\n");
-    html.push_str("      display: grid;\n");
-    html.push_str("      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));\n");
-    html.push_str("      gap: 12px;\n");
-    html.push_str("    }\n");
-    html.push_str("    .stat {\n");
-    html.push_str("      padding: 16px 18px;\n");
-    html.push_str("      background: var(--panel);\n");
-    html.push_str("      border: 1px solid var(--border);\n");
-    html.push_str("      border-radius: var(--radius);\n");
-    html.push_str("      box-shadow: 0 10px 24px rgba(22, 17, 13, 0.06);\n");
-    html.push_str("    }\n");
-    html.push_str("    .stat-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }\n");
-    html.push_str("    .stat-value { margin-top: 6px; font-size: 16px; font-weight: 600; }\n");
-    html.push_str("    .messages {\n");
-    html.push_str("      display: flex;\n");
-    html.push_str("      flex-direction: column;\n");
-    html.push_str("      gap: 18px;\n");
-    html.push_str("    }\n");
-    html.push_str("    .msg {\n");
-    html.push_str("      width: min(92%, 760px);\n");
-    html.push_str("      border-radius: var(--radius);\n");
-    html.push_str("      border: 1px solid var(--border);\n");
-    html.push_str("      padding: 16px 18px 14px;\n");
-    html.push_str("      background: var(--assistant);\n");
-    html.push_str("      box-shadow: 0 12px 24px rgba(24, 18, 14, 0.06);\n");
-    html.push_str("      animation: rise 0.5s ease both;\n");
-    html.push_str("      animation-delay: calc(var(--i) * 0.04s);\n");
-    html.push_str("    }\n");
-    html.push_str("    .msg.user { margin-left: auto; background: var(--user); }\n");
-    html.push_str("    .msg.system { background: var(--system); }\n");
-    html.push_str("    .msg.tool { background: var(--tool); }\n");
-    html.push_str("    .msg.event { background: var(--event); }\n");
-    html.push_str("    .msg-head {\n");
-    html.push_str("      display: flex;\n");
-    html.push_str("      justify-content: space-between;\n");
-    html.push_str("      align-items: center;\n");
-    html.push_str("      margin-bottom: 10px;\n");
-    html.push_str("      font-size: 12px;\n");
-    html.push_str("      color: var(--muted);\n");
-    html.push_str("      text-transform: uppercase;\n");
-    html.push_str("      letter-spacing: 0.08em;\n");
-    html.push_str("    }\n");
-    html.push_str("    .badge {\n");
-    html.push_str("      padding: 4px 10px;\n");
-    html.push_str("      border-radius: 999px;\n");
-    html.push_str("      background: rgba(31, 27, 24, 0.08);\n");
-    html.push_str("      color: var(--ink);\n");
-    html.push_str("      font-size: 11px;\n");
-    html.push_str("      font-weight: 600;\n");
-    html.push_str("    }\n");
-    html.push_str("    .msg-content {\n");
-    html.push_str("      white-space: pre-wrap;\n");
-    html.push_str("      font-size: 15px;\n");
-    html.push_str("      line-height: 1.5;\n");
-    html.push_str("    }\n");
-    html.push_str("    .raw {\n");
-    html.push_str("      margin-top: 12px;\n");
-    html.push_str("    }\n");
-    html.push_str("    .divider {\n");
-    html.push_str("      margin: 22px 0 6px;\n");
-    html.push_str("      display: flex;\n");
-    html.push_str("      align-items: center;\n");
-    html.push_str("      gap: 12px;\n");
-    html.push_str("      color: var(--muted);\n");
-    html.push_str("      font-size: 12px;\n");
-    html.push_str("      letter-spacing: 0.12em;\n");
-    html.push_str("      text-transform: uppercase;\n");
-    html.push_str("    }\n");
-    html.push_str("    .divider::before,\n");
-    html.push_str("    .divider::after {\n");
-    html.push_str("      content: \"\";\n");
-    html.push_str("      flex: 1;\n");
-    html.push_str("      height: 1px;\n");
-    html.push_str("      background: var(--border);\n");
-    html.push_str("    }\n");
-    html.push_str("    .raw summary {\n");
-    html.push_str("      cursor: pointer;\n");
-    html.push_str("      color: var(--accent-2);\n");
-    html.push_str("      font-size: 12px;\n");
-    html.push_str("      text-transform: uppercase;\n");
-    html.push_str("      letter-spacing: 0.08em;\n");
-    html.push_str("    }\n");
-    html.push_str("    .raw pre {\n");
-    html.push_str("      background: rgba(31, 27, 24, 0.08);\n");
-    html.push_str("      padding: 12px;\n");
-    html.push_str("      border-radius: 12px;\n");
-    html.push_str("      overflow-x: auto;\n");
-    html.push_str("      font-size: 12px;\n");
-    html.push_str("      line-height: 1.4;\n");
-    html.push_str("    }\n");
-    html.push_str("    footer {\n");
-    html.push_str("      margin-top: 40px;\n");
-    html.push_str("      color: var(--muted);\n");
-    html.push_str("      font-size: 12px;\n");
-    html.push_str("      text-align: center;\n");
-    html.push_str("    }\n");
-    html.push_str("    @keyframes rise {\n");
-    html.push_str("      from { opacity: 0; transform: translateY(12px); }\n");
-    html.push_str("      to { opacity: 1; transform: translateY(0); }\n");
-    html.push_str("    }\n");
-    html.push_str("    @media (max-width: 720px) {\n");
-    html.push_str("      main { padding: 32px 16px 60px; }\n");
-    html.push_str("      .msg { width: 100%; }\n");
-    html.push_str("      .title { font-size: 26px; }\n");
-    html.push_str("    }\n");
-    html.push_str("    @media (prefers-reduced-motion: reduce) {\n");
-    html.push_str("      .msg { animation: none; }\n");
-    html.push_str("    }\n");
-    html.push_str("  </style>\n");
-    html.push_str("</head>\n");
-    html.push_str("<body>\n");
-    html.push_str("  <main>\n");
-    html.push_str("    <header class=\"hero\">\n");
-    html.push_str("      <h1 class=\"title\">Agent Export</h1>\n");
-    html.push_str("      <p class=\"subtitle\">Chat session share page</p>\n");
-    html.push_str("      <div class=\"meta\">\n");
-    for (label, value) in meta_rows {
-        html.push_str("        <span class=\"chip\"><strong>");
-        html.push_str(&escape_html(label));
-        html.push_str("</strong> ");
-        html.push_str(&escape_html(&value));
-        html.push_str("</span>\n");
-    }
-    html.push_str("      </div>\n");
-    html.push_str("    </header>\n");
-    html.push_str("    <section class=\"stats\">\n");
-    html.push_str("      <div class=\"stat\"><div class=\"stat-label\">messages</div><div class=\"stat-value\">");
-    html.push_str(&message_count.to_string());
-    html.push_str("</div></div>\n");
-    html.push_str("      <div class=\"stat\"><div class=\"stat-label\">roles</div><div class=\"stat-value\">");
-    html.push_str(&escape_html(&role_summary));
-    html.push_str("</div></div>\n");
-    html.push_str("    </section>\n");
-    html.push_str("    <section class=\"messages\">\n");
-
-    if messages.is_empty() {
-        html.push_str("      <div class=\"msg event\" style=\"--i:0;\">\n");
-        html.push_str("        <div class=\"msg-head\"><span class=\"badge\">empty</span><span>#0</span></div>\n");
-        html.push_str("        <div class=\"msg-content\">No messages were parsed from this transcript.</div>\n");
-        html.push_str("      </div>\n");
-    } else {
-        let mut last_role: Option<String> = None;
-        for (idx, message) in messages.iter().enumerate() {
-            let role = if message.role.is_empty() {
-                "event"
-            } else {
-                message.role.as_str()
-            };
-            if last_role.as_deref() != Some(role) {
-                html.push_str("      <div class=\"divider\">");
-                html.push_str(&escape_html(role));
-                html.push_str("</div>\n");
-                last_role = Some(role.to_string());
-            }
-            let role_class = match role {
-                "user" => "user",
-                "assistant" => "assistant",
-                "system" => "system",
-                "tool" => "tool",
-                _ => "event",
-            };
-            html.push_str(&format!("      <article class=\"msg {role_class}\" data-role=\"{}\" style=\"--i:{};\">\n", escape_html(role), idx));
-            html.push_str("        <div class=\"msg-head\">\n");
-            html.push_str("          <span class=\"badge\">");
-            html.push_str(&escape_html(role));
-            html.push_str("</span>\n");
-            html.push_str(&format!("          <span>#{}", idx + 1));
-            html.push_str("</span>\n");
-            html.push_str("        </div>\n");
-            html.push_str("        <div class=\"msg-content\">");
-            html.push_str(&escape_html(&message.content));
-            html.push_str("</div>\n");
-            if let Some(raw) = &message.raw {
-                html.push_str("        <details class=\"raw\">\n");
-                let label = message.raw_label.as_deref().unwrap_or("Raw event");
-                html.push_str("          <summary>");
-                html.push_str(&escape_html(label));
-                html.push_str("</summary>\n");
-                html.push_str("          <pre>");
-                html.push_str(&escape_html(raw));
-                html.push_str("</pre>\n");
-                html.push_str("        </details>\n");
-            }
-            html.push_str("      </article>\n");
-        }
-    }
-
-    html.push_str("    </section>\n");
-    html.push_str("    <footer>Generated by agentexport</footer>\n");
-    html.push_str("  </main>\n");
-    html.push_str("</body>\n");
-    html.push_str("</html>\n");
-    Ok(html)
+    Ok(SharePayload {
+        tool: tool_display.to_string(),
+        session_id: session_id.or(thread_id).map(|s| s.to_string()),
+        title,
+        shared_at: format_generated_at_nice(),
+        model: parsed.dominant_model(),
+        models,
+        messages: parsed.messages,
+    })
 }
 
 fn resolve_claude_transcript(
@@ -1417,23 +1310,16 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
     gzip_to_file(&transcript_path, &gzip_path)?;
     let gzip_bytes = fs::metadata(&gzip_path)?.len();
 
-    // Render HTML if requested OR if we're uploading (upload requires HTML)
-    let should_render = options.render || options.upload_url.is_some();
-    let (render_path, html_content) = if should_render {
-        let cwd = match options.tool {
-            Tool::Claude => read_claude_state(&term_key).ok().map(|state| state.cwd),
-            Tool::Codex => read_session_meta(&transcript_path)
-                .ok()
-                .and_then(|meta| meta.and_then(|meta| meta.cwd)),
-        };
-        let html = render_share_page(
+    // Create payload if uploading or rendering
+    let should_create_payload = options.render || options.upload_url.is_some();
+    let (render_path, payload_json) = if should_create_payload {
+        let payload = create_share_payload(
             options.tool,
-            &term_key,
             &transcript_path,
             session_id.as_deref(),
             thread_id.as_deref(),
-            cwd.as_deref(),
         )?;
+        let json = serde_json::to_string(&payload)?;
 
         // Only write to disk if --render was explicitly requested
         let path = if options.render {
@@ -1443,12 +1329,13 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
                     .parent()
                     .unwrap_or_else(|| Path::new(".")),
             )?;
-            fs::write(&render_path, &html)?;
+            // Write JSON for local preview (can be viewed with a local viewer)
+            fs::write(&render_path, &json)?;
             Some(render_path.display().to_string())
         } else {
             None
         };
-        (path, Some(html))
+        (path, Some(json))
     } else {
         (None, None)
     };
@@ -1457,8 +1344,8 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
     let (share_url, note) = if options.dry_run {
         (None, "upload skipped (dry-run)".to_string())
     } else if let Some(upload_url) = &options.upload_url {
-        let html = html_content.expect("HTML should be rendered for upload");
-        let encrypted = crypto::encrypt_html(&html)?;
+        let json = payload_json.expect("Payload should be created for upload");
+        let encrypted = crypto::encrypt_html(&json)?;
         let result = upload::upload_blob(upload_url, &encrypted.blob, &encrypted.key_b64)?;
 
         // Save share locally for management

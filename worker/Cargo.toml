@@ -15,6 +15,7 @@ hex = "0.4"
 getrandom = { version = "0.2", features = ["js"] }
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
+maud = "0.26"
 
 [profile.release]
 opt-level = "s"

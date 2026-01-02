@@ -1,3 +1,4 @@
+use maud::{DOCTYPE, html, PreEscaped};
 use sha2::{Digest, Sha256};
 use worker::*;
 
@@ -438,172 +439,340 @@ echo "Run 'agentexport setup-skills' to configure Claude Code or Codex"
 }
 
 fn viewer_html(blob_id: &str) -> String {
-    format!(
-        r##"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shared Transcript</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a1a;
-            color: #e0e0e0;
-            min-height: 100vh;
+    let markup = html! {
+        (DOCTYPE)
+        html lang="en" {
+            head {
+                meta charset="UTF-8";
+                meta name="viewport" content="width=device-width, initial-scale=1.0";
+                title { "Shared Transcript" }
+                style { (PreEscaped(VIEWER_CSS)) }
+            }
+            body {
+                div #loading class="loading" {
+                    div class="spinner" {}
+                    p { "Decrypting..." }
+                }
+                div #error class="error" style="display:none" {
+                    h2 { "Decryption Failed" }
+                    p #error-message {}
+                }
+                div #app style="display:none" {
+                    header {
+                        div class="title-row" {
+                            div class="title-left" {
+                                h1 #tool-name { "Transcript" }
+                                span #model-info class="model" {}
+                            }
+                            span #shared-at class="date" {}
+                        }
+                        div class="meta-row" {
+                            span #session-id class="session" {}
+                            div class="toggle" {
+                                label {
+                                    input #show-details type="checkbox";
+                                    " Show tool calls"
+                                }
+                            }
+                        }
+                    }
+                    section #messages class="messages hide-details" {}
+                    footer {
+                        "via "
+                        a href="https://agentexports.com" { "agentexports.com" }
+                    }
+                }
+                script { (PreEscaped(viewer_js(blob_id))) }
+            }
+        }
+    };
+    markup.into_string()
+}
+
+const VIEWER_CSS: &str = r#"
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #fff;
+    color: #111;
+    line-height: 1.6;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 24px;
+}
+.loading, .error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    text-align: center;
+}
+.spinner {
+    width: 32px; height: 32px;
+    border: 3px solid #eee;
+    border-top-color: #333;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 1rem;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.error { color: #c00; }
+.error h2 { margin-bottom: 0.5rem; }
+header { margin-bottom: 32px; }
+.title-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.title-left { display: flex; align-items: baseline; gap: 12px; }
+h1 { font-size: 18px; font-weight: 600; }
+.model { font-size: 13px; color: #666; font-family: ui-monospace, monospace; }
+.date { font-size: 13px; color: #666; }
+.meta-row { display: flex; justify-content: space-between; align-items: center; }
+.session { font-family: ui-monospace, monospace; font-size: 12px; color: #999; }
+.toggle { font-size: 13px; color: #666; }
+.toggle label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.messages { margin-top: 24px; }
+.msg { padding: 16px 0; }
+.msg-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.msg-role { font-size: 12px; font-weight: 600; text-transform: uppercase; color: #666; }
+.msg-role.user { color: #0066cc; }
+.msg-role.assistant { color: #1a1a1a; }
+.msg-model { font-size: 11px; color: #999; font-family: ui-monospace, monospace; }
+.msg-content { font-size: 15px; }
+.msg-content p { margin: 0.5em 0; }
+.msg-content p:first-child { margin-top: 0; }
+.msg-content code { background: #f5f5f5; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+.msg-content pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
+.msg-content pre code { background: none; padding: 0; }
+.msg-content ul, .msg-content ol { margin: 0.5em 0 0.5em 1.5em; }
+.msg-content h1, .msg-content h2, .msg-content h3 { margin: 1em 0 0.5em; font-size: 1.1em; }
+.msg-content table { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
+.msg-content th, .msg-content td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+.msg-content th { background: #f5f5f5; font-weight: 600; }
+.msg.tool, .msg.system { opacity: 0.7; }
+.msg.tool .msg-content { font-family: ui-monospace, monospace; font-size: 13px; white-space: pre-wrap; }
+.msg.system .msg-content { font-size: 13px; color: #666; border-left: 3px solid #ddd; padding-left: 12px; }
+.hide-details .msg.tool, .hide-details .msg.system { display: none; }
+.raw { margin-top: 8px; }
+.raw summary { font-size: 12px; color: #666; cursor: pointer; }
+.raw pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 8px; max-height: 300px; }
+footer { margin-top: 48px; font-size: 12px; color: #999; text-align: center; }
+footer a { color: #666; text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+"#;
+
+fn viewer_js(blob_id: &str) -> String {
+    format!(r#"
+const BLOB_ID = "{blob_id}";
+
+// Minimal markdown parser with table support
+function md(text) {{
+    if (!text) return '';
+
+    // Extract code blocks first (before any processing)
+    const codeBlocks = [];
+    text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {{
+        const placeholder = '%%CODE' + codeBlocks.length + '%%';
+        codeBlocks.push('<pre><code>' + escapeHtml(code) + '</code></pre>');
+        return placeholder;
+    }});
+
+    // Extract inline code
+    const inlineCodes = [];
+    text = text.replace(/`([^`]+)`/g, (m, code) => {{
+        const placeholder = '%%INLINE' + inlineCodes.length + '%%';
+        inlineCodes.push('<code>' + escapeHtml(code) + '</code>');
+        return placeholder;
+    }});
+
+    // Extract tables
+    const tableRegex = /^\|(.+)\|\n\|[-:\| ]+\|\n((?:\|.+\|\n?)+)/gm;
+    const tables = [];
+    text = text.replace(tableRegex, (match, headerRow, bodyRows) => {{
+        const headers = headerRow.split('|').map(h => h.trim()).filter(h => h);
+        const rows = bodyRows.trim().split('\n').map(row =>
+            row.split('|').map(c => c.trim()).filter(c => c)
+        );
+        let table = '<table><thead><tr>';
+        headers.forEach(h => {{ table += '<th>' + escapeHtml(h) + '</th>'; }});
+        table += '</tr></thead><tbody>';
+        rows.forEach(row => {{
+            table += '<tr>';
+            row.forEach(c => {{ table += '<td>' + escapeHtml(c) + '</td>'; }});
+            table += '</tr>';
+        }});
+        table += '</tbody></table>';
+        const placeholder = '%%TABLE' + tables.length + '%%';
+        tables.push(table);
+        return placeholder;
+    }});
+
+    // Now escape HTML
+    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Process markdown
+    text = text
+        // Bold (must come before italic)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/__(.+?)__/g, '<strong>$1</strong>')
+        // Italic
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/_(.+?)_/g, '<em>$1</em>')
+        // Headers
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        // Lists
+        .replace(/^- (.+)$/gm, '<li>$1</li>')
+        .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+        // Links
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+    // Paragraphs
+    text = text.split(/\n\n+/).map(p => {{
+        if (p.startsWith('<h') || p.startsWith('<pre') || p.startsWith('<ul') || p.startsWith('%%')) return p;
+        return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+    }}).join('');
+
+    // Restore placeholders
+    tables.forEach((t, i) => {{ text = text.replace('%%TABLE' + i + '%%', t); }});
+    inlineCodes.forEach((c, i) => {{ text = text.replace('%%INLINE' + i + '%%', c); }});
+    codeBlocks.forEach((c, i) => {{ text = text.replace('%%CODE' + i + '%%', c); }});
+
+    return text;
+}}
+
+function escapeHtml(str) {{
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}}
+
+function render(data) {{
+    document.getElementById('tool-name').textContent = data.tool || 'Transcript';
+    document.getElementById('shared-at').textContent = data.shared_at || '';
+    document.getElementById('session-id').textContent = data.session_id || '';
+
+    // Model display
+    const models = data.models || [];
+    const modelEl = document.getElementById('model-info');
+    if (models.length === 1) {{
+        modelEl.textContent = models[0];
+    }} else if (models.length > 1) {{
+        modelEl.textContent = models.join(' + ');
+    }}
+
+    const showMultipleModels = models.length > 1;
+    const container = document.getElementById('messages');
+    container.innerHTML = '';
+
+    for (const msg of data.messages || []) {{
+        const div = document.createElement('div');
+        div.className = 'msg ' + (msg.role || 'event');
+
+        const header = document.createElement('div');
+        header.className = 'msg-header';
+
+        const role = document.createElement('span');
+        role.className = 'msg-role ' + (msg.role || '');
+        role.textContent = msg.role || 'event';
+        header.appendChild(role);
+
+        if (showMultipleModels && msg.model) {{
+            const model = document.createElement('span');
+            model.className = 'msg-model';
+            model.textContent = msg.model;
+            header.appendChild(model);
         }}
-        .loading, .error {{
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            padding: 2rem;
-            text-align: center;
+
+        div.appendChild(header);
+
+        const content = document.createElement('div');
+        content.className = 'msg-content';
+        if (msg.role === 'tool') {{
+            content.textContent = msg.content || '';
+        }} else {{
+            content.innerHTML = md(msg.content || '');
         }}
-        .spinner {{
-            width: 40px;
-            height: 40px;
-            border: 3px solid #333;
-            border-top-color: #0084ff;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 1rem;
-        }}
-        @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-        .error {{ color: #ff6b6b; }}
-        .error h2 {{ margin-bottom: 0.5rem; }}
-        #content {{ display: none; }}
-        iframe {{
-            width: 100%;
-            height: 100vh;
-            border: none;
-            background: #fff;
-        }}
-    </style>
-</head>
-<body>
-    <div id="loading" class="loading">
-        <div class="spinner"></div>
-        <p>Decrypting transcript...</p>
-    </div>
+        div.appendChild(content);
 
-    <div id="error" class="error" style="display: none;">
-        <h2>Decryption Failed</h2>
-        <p id="error-message"></p>
-    </div>
-
-    <div id="content">
-        <iframe id="viewer" sandbox="allow-scripts allow-same-origin"></iframe>
-    </div>
-
-    <script>
-        const BLOB_ID = "{blob_id}";
-
-        async function main() {{
-            try {{
-                const fragment = window.location.hash.slice(1);
-                if (!fragment) {{
-                    throw new Error("No decryption key in URL");
-                }}
-
-                const keyBytes = base64UrlDecode(fragment);
-                if (keyBytes.length !== 32) {{
-                    throw new Error("Invalid key length");
-                }}
-
-                const response = await fetch(`/blob/${{BLOB_ID}}`);
-                if (response.status === 410) {{
-                    throw new Error("This transcript has expired");
-                }}
-                if (!response.ok) {{
-                    throw new Error(`Failed to fetch: ${{response.status}}`);
-                }}
-                const encryptedData = await response.arrayBuffer();
-
-                if (encryptedData.byteLength < 13) {{
-                    throw new Error("Invalid blob format");
-                }}
-                const iv = encryptedData.slice(0, 12);
-                const ciphertext = encryptedData.slice(12);
-
-                const key = await crypto.subtle.importKey(
-                    "raw",
-                    keyBytes,
-                    {{ name: "AES-GCM" }},
-                    false,
-                    ["decrypt"]
-                );
-
-                const compressed = await crypto.subtle.decrypt(
-                    {{ name: "AES-GCM", iv: iv }},
-                    key,
-                    ciphertext
-                );
-
-                // Decompress gzip
-                const html = await decompress(new Uint8Array(compressed));
-
-                document.getElementById("loading").style.display = "none";
-                document.getElementById("content").style.display = "block";
-
-                const iframe = document.getElementById("viewer");
-                iframe.srcdoc = html;
-
-            }} catch (err) {{
-                document.getElementById("loading").style.display = "none";
-                document.getElementById("error").style.display = "flex";
-                document.getElementById("error-message").textContent = err.message;
-                console.error("Decryption error:", err);
-            }}
+        if (msg.raw) {{
+            const details = document.createElement('details');
+            details.className = 'raw';
+            const summary = document.createElement('summary');
+            summary.textContent = msg.raw_label || 'Raw';
+            details.appendChild(summary);
+            const pre = document.createElement('pre');
+            pre.textContent = msg.raw;
+            details.appendChild(pre);
+            div.appendChild(details);
         }}
 
-        function base64UrlDecode(str) {{
-            const pad = str.length % 4;
-            if (pad) {{
-                str += "=".repeat(4 - pad);
-            }}
-            str = str.replace(/-/g, "+").replace(/_/g, "/");
-            const binary = atob(str);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) {{
-                bytes[i] = binary.charCodeAt(i);
-            }}
-            return bytes;
-        }}
+        container.appendChild(div);
+    }}
 
-        async function decompress(data) {{
-            // Use DecompressionStream if available (modern browsers)
-            if (typeof DecompressionStream !== 'undefined') {{
-                const ds = new DecompressionStream('gzip');
-                const writer = ds.writable.getWriter();
-                writer.write(data);
-                writer.close();
-                const reader = ds.readable.getReader();
-                const chunks = [];
-                while (true) {{
-                    const {{ done, value }} = await reader.read();
-                    if (done) break;
-                    chunks.push(value);
-                }}
-                const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-                const result = new Uint8Array(totalLength);
-                let offset = 0;
-                for (const chunk of chunks) {{
-                    result.set(chunk, offset);
-                    offset += chunk.length;
-                }}
-                return new TextDecoder().decode(result);
-            }} else {{
-                throw new Error("Browser does not support DecompressionStream");
-            }}
-        }}
+    document.getElementById('show-details').addEventListener('change', function() {{
+        document.getElementById('messages').classList.toggle('hide-details', !this.checked);
+    }});
+}}
 
-        main();
-    </script>
-</body>
-</html>
-"##
-    )
+async function main() {{
+    try {{
+        const fragment = window.location.hash.slice(1);
+        if (!fragment) throw new Error("No decryption key in URL");
+
+        const keyBytes = base64UrlDecode(fragment);
+        if (keyBytes.length !== 32) throw new Error("Invalid key length");
+
+        const response = await fetch('/blob/' + BLOB_ID);
+        if (response.status === 410) throw new Error("This transcript has expired");
+        if (!response.ok) throw new Error('Failed to fetch: ' + response.status);
+
+        const encrypted = await response.arrayBuffer();
+        if (encrypted.byteLength < 13) throw new Error("Invalid blob");
+
+        const iv = encrypted.slice(0, 12);
+        const ciphertext = encrypted.slice(12);
+
+        const key = await crypto.subtle.importKey("raw", keyBytes, {{ name: "AES-GCM" }}, false, ["decrypt"]);
+        const compressed = await crypto.subtle.decrypt({{ name: "AES-GCM", iv }}, key, ciphertext);
+        const json = await decompress(new Uint8Array(compressed));
+        const data = JSON.parse(json);
+
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('app').style.display = 'block';
+        render(data);
+    }} catch (err) {{
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error').style.display = 'flex';
+        document.getElementById('error-message').textContent = err.message;
+    }}
+}}
+
+function base64UrlDecode(str) {{
+    const pad = str.length % 4;
+    if (pad) str += '='.repeat(4 - pad);
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(str);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+}}
+
+async function decompress(data) {{
+    const ds = new DecompressionStream('gzip');
+    const writer = ds.writable.getWriter();
+    writer.write(data);
+    writer.close();
+    const chunks = [];
+    const reader = ds.readable.getReader();
+    while (true) {{
+        const {{ done, value }} = await reader.read();
+        if (done) break;
+        chunks.push(value);
+    }}
+    const result = new Uint8Array(chunks.reduce((a, c) => a + c.length, 0));
+    let offset = 0;
+    for (const chunk of chunks) {{ result.set(chunk, offset); offset += chunk.length; }}
+    return new TextDecoder().decode(result);
+}}
+
+main();
+"#)
 }

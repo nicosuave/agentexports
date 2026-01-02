@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use agentexport::{
     PublishOptions,
     Tool,
-    current_term_key,
     handle_claude_sessionstart,
     publish,
     setup_skills_interactive,
@@ -23,17 +22,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(name = "term-key")]
-    TermKey,
-
-    #[command(name = "claude-sessionstart")]
+    /// Internal: called by Claude hook
+    #[command(name = "claude-sessionstart", hide = true)]
     ClaudeSessionstart,
 
     #[command(name = "publish")]
     Publish {
         #[arg(long)]
         tool: Tool,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         term_key: Option<String>,
         #[arg(long)]
         transcript: Option<PathBuf>,
@@ -84,10 +81,6 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::TermKey => {
-            let key = current_term_key()?;
-            println!("{key}");
-        }
         Commands::ClaudeSessionstart => {
             let input = read_stdin()?;
             handle_claude_sessionstart(&input)?;
