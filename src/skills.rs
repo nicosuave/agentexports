@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use crate::Tool;
 
 const CLAUDE_SKILL_SRC: &str = "skills/claude/agentexport/SKILL.md";
-const CLAUDE_HOOK_SRC: &str = "skills/claude/hooks/memex";
-const CODEX_PROMPT_SRC: &str = "skills/codex/publish_export.md";
-const CLAUDE_HOOK_NAME: &str = "memex";
+const CLAUDE_HOOK_SRC: &str = "skills/claude/hooks/agentexport";
+const CODEX_PROMPT_SRC: &str = "skills/codex/agentexport.md";
+const CLAUDE_HOOK_NAME: &str = "agentexport";
 
 pub fn setup_skills_interactive() -> Result<()> {
     let theme = ColorfulTheme::default();
@@ -36,7 +36,7 @@ pub fn setup_skills_interactive() -> Result<()> {
 
     let proceed = Confirm::with_theme(&theme)
         .with_prompt(
-            "This will install user skills/prompts from this binary. If Claude is selected, it will install ~/.claude/hooks/memex and update ~/.claude/settings.json to run it on SessionStart. Continue?",
+            "This will install user skills/prompts from this binary. If Claude is selected, it will install ~/.claude/hooks/agentexport and update ~/.claude/settings.json to run it on SessionStart. Continue?",
         )
         .default(true)
         .interact()?;
@@ -104,7 +104,7 @@ fn install_codex_prompt() -> Result<()> {
         bail!("missing {CODEX_PROMPT_SRC} in repo");
     }
     let dest_dir = ensure_codex_prompts_dir()?;
-    let dest = dest_dir.join("publish_export.md");
+    let dest = dest_dir.join("agentexport.md");
     if dest.exists() {
         println!("Skipping Codex prompt (already installed at {}).", dest.display());
         return Ok(());
