@@ -38,7 +38,7 @@ Just type `/agentexport` in any session:
 
 Claude will publish your current session and return a shareable URL like:
 ```
-https://agentexports.com/v/abc123#SGVsbG8gV29ybGQh...
+https://agentexports.com/v/ga1b2c3d4e5f6g7h8#SGVsbG8gV29ybGQh...
 ```
 
 ### Codex
@@ -73,9 +73,25 @@ The server operator cannot read your transcripts because:
 ```
 https://agentexports.com/v/{id}#{key}
                             │    │
-                            │    └── Base64url decryption key (never sent to server)
-                            └─────── Content ID (SHA-256 prefix)
+                            │    └── Base64url AES-256 key (never sent to server)
+                            └─────── TTL prefix + content hash (e.g., g = 30 days)
 ```
+
+### Managing Shares
+
+List your shares and their expiration:
+
+```bash
+agentexport shares
+```
+
+Delete a share:
+
+```bash
+agentexport shares unshare <id>
+```
+
+Shares are stored locally in `~/.cache/agentexport/shares.json` with the decryption keys needed for deletion.
 
 ## Self-Hosting
 
