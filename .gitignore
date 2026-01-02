@@ -1,3 +1,7 @@
 /target
 .claude/
 .codex/
+
+# Prevent accidental commit of transcript previews
+preview*.html
+mockup*.html
