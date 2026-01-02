@@ -18,6 +18,9 @@ TTL_DAYS = "30"
 workers_dev = false
 routes = [{ pattern = "agentexports.com", custom_domain = true }]
 
+[env.production.vars]
+TTL_DAYS = "30"
+
 [[env.production.r2_buckets]]
 binding = "TRANSCRIPTS"
 bucket_name = "agent-exports"
