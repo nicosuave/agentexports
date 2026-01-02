@@ -287,7 +287,7 @@ fn homepage_html() -> String {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>agentexports</title>
+    <title>agentexport</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -350,7 +350,7 @@ fn homepage_html() -> String {
 </head>
 <body>
     <header>
-        <h1>agentexports</h1>
+        <h1>agentexport</h1>
         <a href="https://github.com/nicosuave/agentexport">GitHub</a>
     </header>
     <p class="tagline">Share Claude Code and Codex transcripts. No signup required.</p>
@@ -389,7 +389,7 @@ fn homepage_html() -> String {
     <p>Transcripts are compressed and encrypted locally with AES-256-GCM before upload. The server only stores opaque encrypted blobs. Decryption happens entirely in the recipient's browser.</p>
 
     <h2>Privacy</h2>
-    <p>The decryption key lives in the URL fragment (<code>#key</code>) which browsers never send to servers. The server operator cannot read your transcripts. Only people you share the URL with can decrypt and view the content.</p>
+    <p>The decryption key lives in the URL fragment (<code>#key</code>) which browsers never send to servers. The server operator cannot read your transcripts. URLs without the correct key will fail to decrypt, showing only garbled data.</p>
 
     <h2>Expiration</h2>
     <p>Shares auto-expire after 30 days by default. You can choose longer retention (60, 90, 180, 365 days) or keep shares forever using the <code>--ttl</code> flag.</p>

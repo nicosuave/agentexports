@@ -67,6 +67,7 @@ The server operator cannot read your transcripts because:
 2. The decryption key is placed in the URL fragment (`#key`)
 3. Browsers never send URL fragments to servers
 4. Decryption happens entirely in the recipient's browser
+5. URLs without the correct key will fail to decrypt
 
 ### URL Format
 
