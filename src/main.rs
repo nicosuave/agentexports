@@ -8,7 +8,6 @@ use agentexport::{
     Tool,
     current_term_key,
     handle_claude_sessionstart,
-    handle_codex_notify,
     publish,
     setup_skills_interactive,
 };
@@ -27,13 +26,6 @@ enum Commands {
 
     #[command(name = "claude-sessionstart")]
     ClaudeSessionstart,
-
-    #[command(name = "codex-notify")]
-    CodexNotify {
-        #[arg(long)]
-        term_key: Option<String>,
-        json: Option<String>,
-    },
 
     #[command(name = "publish")]
     Publish {
@@ -75,13 +67,6 @@ fn run() -> Result<()> {
         Commands::ClaudeSessionstart => {
             let input = read_stdin()?;
             handle_claude_sessionstart(&input)?;
-        }
-        Commands::CodexNotify { term_key, json } => {
-            let payload = match json {
-                Some(value) => value,
-                None => read_stdin()?,
-            };
-            handle_codex_notify(&payload, term_key)?;
         }
         Commands::Publish {
             tool,
