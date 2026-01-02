@@ -381,7 +381,7 @@ set -e
 
 REPO="nicosuave/agentexports"
 BINARY="agentexport"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 # Detect OS
 OS="$(uname -s)"
@@ -415,16 +415,23 @@ trap "rm -rf $TMP_DIR" EXIT
 
 curl -fsSL "$URL" | tar -xz -C "$TMP_DIR"
 
-# Install
-if [ -w "$INSTALL_DIR" ]; then
-    mv "$TMP_DIR/$BINARY" "$INSTALL_DIR/"
-else
-    echo "Installing to $INSTALL_DIR (requires sudo)..."
-    sudo mv "$TMP_DIR/$BINARY" "$INSTALL_DIR/"
-fi
-
+mkdir -p "$INSTALL_DIR"
+mv "$TMP_DIR/$BINARY" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/$BINARY"
+
 echo "Installed $BINARY to $INSTALL_DIR/$BINARY"
+
+# Check if ~/.local/bin is in PATH
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *)
+        echo ""
+        echo "Note: $INSTALL_DIR is not in your PATH."
+        echo "Add this to your shell config (~/.bashrc, ~/.zshrc, etc.):"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        ;;
+esac
+
 echo ""
 echo "Run 'agentexport setup-skills' to configure Claude Code or Codex"
 "##.to_string()
