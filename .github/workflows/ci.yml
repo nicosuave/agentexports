@@ -34,9 +34,6 @@ jobs:
       - name: Run unit tests
         run: cargo test --lib
 
-      - name: Run crypto and upload tests
-        run: cargo test crypto upload
-
   e2e:
     runs-on: ubuntu-latest
     steps:
