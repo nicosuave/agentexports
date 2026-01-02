@@ -12,6 +12,11 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     router
         .get("/", |_, _| Response::from_html(homepage_html()))
+        .get("/setup", |_, _| {
+            let mut response = Response::ok(setup_script())?;
+            response.headers_mut().set("Content-Type", "text/plain")?;
+            Ok(response)
+        })
         .post_async("/upload", handle_upload)
         .get_async("/v/:id", handle_viewer)
         .get_async("/blob/:id", handle_blob)
@@ -281,6 +286,30 @@ fn homepage_html() -> String {
         li { margin: 0.25rem 0; }
         code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }
         a { color: #0066cc; }
+        .install-box {
+            display: flex;
+            align-items: center;
+            background: #f4f4f4;
+            border-radius: 4px;
+            padding: 0.75rem 1rem;
+            margin: 0.5rem 0;
+            font-family: monospace;
+        }
+        .install-box code {
+            flex: 1;
+            background: none;
+            padding: 0;
+        }
+        .install-box button {
+            background: #0066cc;
+            color: white;
+            border: none;
+            padding: 0.4rem 0.8rem;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .install-box button:hover { background: #0052a3; }
     </style>
 </head>
 <body>
@@ -295,9 +324,15 @@ fn homepage_html() -> String {
         <li>Auto-expires after 30 days</li>
     </ul>
 
+    <h2>Install</h2>
+    <div class="install-box">
+        <code id="install-cmd">curl -fsSL https://agentexports.com/setup | sh</code>
+        <button onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)">Copy</button>
+    </div>
+    <p>Or via cargo: <code>cargo install agentexport</code></p>
+
     <h2>Usage</h2>
     <ul>
-        <li>Install: <code>cargo install agentexport</code></li>
         <li>Setup: <code>agentexport setup-skills</code></li>
         <li>Claude Code: type <code>/agentexport</code></li>
         <li>Codex: type <code>/agentexport</code></li>
@@ -309,6 +344,61 @@ fn homepage_html() -> String {
     </ul>
 </body>
 </html>
+"##.to_string()
+}
+
+fn setup_script() -> String {
+    r##"#!/bin/sh
+set -e
+
+REPO="nicosuave/agentexports"
+BINARY="agentexport"
+INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+
+# Detect OS
+OS="$(uname -s)"
+case "$OS" in
+    Darwin) OS="macos" ;;
+    Linux) OS="linux" ;;
+    *) echo "Unsupported OS: $OS"; exit 1 ;;
+esac
+
+# Detect architecture
+ARCH="$(uname -m)"
+case "$ARCH" in
+    x86_64|amd64) ARCH="x86_64" ;;
+    arm64|aarch64) ARCH="arm64" ;;
+    *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+# Get latest version
+VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+if [ -z "$VERSION" ]; then
+    echo "Failed to get latest version"
+    exit 1
+fi
+
+echo "Installing $BINARY v$VERSION for $OS-$ARCH..."
+
+# Download and extract
+URL="https://github.com/$REPO/releases/download/v$VERSION/$BINARY-$VERSION-$OS-$ARCH.tar.gz"
+TMP_DIR=$(mktemp -d)
+trap "rm -rf $TMP_DIR" EXIT
+
+curl -fsSL "$URL" | tar -xz -C "$TMP_DIR"
+
+# Install
+if [ -w "$INSTALL_DIR" ]; then
+    mv "$TMP_DIR/$BINARY" "$INSTALL_DIR/"
+else
+    echo "Installing to $INSTALL_DIR (requires sudo)..."
+    sudo mv "$TMP_DIR/$BINARY" "$INSTALL_DIR/"
+fi
+
+chmod +x "$INSTALL_DIR/$BINARY"
+echo "Installed $BINARY to $INSTALL_DIR/$BINARY"
+echo ""
+echo "Run 'agentexport setup-skills' to configure Claude Code or Codex"
 "##.to_string()
 }
 
