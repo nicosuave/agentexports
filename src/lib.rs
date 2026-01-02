@@ -1505,7 +1505,7 @@ mod tests {
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
     }
 
     struct EnvGuard {
@@ -1536,6 +1536,14 @@ mod tests {
             let old = std::env::var(key).ok();
             unsafe {
                 std::env::set_var(key, value);
+            }
+            Self { key: key.to_string(), old }
+        }
+
+        fn clear(key: &str) -> Self {
+            let old = std::env::var(key).ok();
+            unsafe {
+                std::env::remove_var(key);
             }
             Self { key: key.to_string(), old }
         }
@@ -1670,6 +1678,9 @@ mod tests {
         let _lock = env_lock();
         let tmp = TempDir::new().unwrap();
         let _guard = EnvGuard::set("AGENTEXPORT_CACHE_DIR", tmp.path().to_str().unwrap());
+        // Clear env vars that would override the state lookup
+        let _guard2 = EnvGuard::clear("AGENTEXPORT_CLAUDE_TRANSCRIPT_PATH");
+        let _guard3 = EnvGuard::clear("AGENTEXPORT_CLAUDE_SESSION_ID");
 
         let transcript = tmp.path().join("sess-abc.jsonl");
         fs::write(&transcript, "{\"role\":\"user\",\"content\":\"Hello\"}\n").unwrap();

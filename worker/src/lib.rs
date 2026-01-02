@@ -300,7 +300,7 @@ fn homepage_html() -> String {
         <li>Install: <code>cargo install agentexport</code></li>
         <li>Setup: <code>agentexport setup-skills</code></li>
         <li>Claude Code: type <code>/agentexport</code></li>
-        <li>Codex: type <code>/publish_export</code></li>
+        <li>Codex: type <code>/agentexport</code></li>
     </ul>
 
     <h2>Links</h2>
