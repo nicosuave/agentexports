@@ -279,15 +279,16 @@ fn homepage_html() -> String {
             padding: 0 1rem;
             line-height: 1.6;
         }
-        h1 { margin-bottom: 0.25rem; }
-        h1 a { color: inherit; text-decoration: none; }
-        h1 a:hover { text-decoration: underline; }
+        header { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.25rem; }
+        h1 { margin: 0; }
+        header a { color: #666; font-size: 0.9rem; }
         .tagline { color: #666; margin-bottom: 2rem; }
         h2 { font-size: 1rem; margin-top: 2rem; color: #333; }
         p { margin: 0.5rem 0; }
         code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }
         a { color: #0066cc; }
         .install-box {
+            position: relative;
             display: flex;
             align-items: center;
             background: #f4f4f4;
@@ -295,33 +296,67 @@ fn homepage_html() -> String {
             padding: 0.75rem 1rem;
             margin: 0.5rem 0;
             font-family: monospace;
+            cursor: pointer;
+            transition: background 0.15s;
         }
+        .install-box:hover { background: #e8e8e8; }
         .install-box code {
             flex: 1;
             background: none;
             padding: 0;
         }
-        .install-box button {
-            background: #0066cc;
-            color: white;
-            border: none;
-            padding: 0.4rem 0.8rem;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 0.85rem;
+        .install-box .copy-icon {
+            width: 18px;
+            height: 18px;
+            opacity: 0.5;
+            transition: opacity 0.15s;
         }
-        .install-box button:hover { background: #0052a3; }
+        .install-box:hover .copy-icon { opacity: 0.8; }
+        .tooltip {
+            position: absolute;
+            right: 0;
+            top: -32px;
+            background: #333;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s;
+        }
+        .install-box:hover .tooltip { opacity: 1; }
+        .tooltip.copied { background: #22863a; }
     </style>
 </head>
 <body>
-    <h1><a href="https://github.com/nicosuave/agentexports">agentexports</a></h1>
+    <header>
+        <h1>agentexports</h1>
+        <a href="https://github.com/nicosuave/agentexports">GitHub</a>
+    </header>
     <p class="tagline">Share Claude Code and Codex transcripts. Encrypted locally, decryption key never leaves your URL.</p>
 
     <h2>Install</h2>
-    <div class="install-box">
-        <code id="install-cmd">curl -fsSL https://agentexports.com/setup | sh</code>
-        <button onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)">Copy</button>
+    <div class="install-box" onclick="copyCmd(this)">
+        <span class="tooltip">Click to copy</span>
+        <code>curl -fsSL https://agentexports.com/setup | sh</code>
+        <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
     </div>
+    <script>
+    function copyCmd(el) {
+        const text = el.querySelector('code').textContent;
+        navigator.clipboard.writeText(text);
+        const tip = el.querySelector('.tooltip');
+        tip.textContent = 'Copied to clipboard';
+        tip.classList.add('copied');
+        setTimeout(() => {
+            tip.textContent = 'Click to copy';
+            tip.classList.remove('copied');
+        }, 2000);
+    }
+    </script>
     <p>Or: <code>cargo install agentexport</code></p>
 
     <h2>Usage</h2>
