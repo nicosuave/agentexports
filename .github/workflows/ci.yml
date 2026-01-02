@@ -64,7 +64,7 @@ jobs:
         run: npm install -g wrangler
 
       - name: Install worker-build
-        run: cargo install worker-build
+        run: cargo install --force worker-build
 
       - name: Build worker
         working-directory: worker
@@ -109,5 +109,5 @@ jobs:
 
       - name: Build worker
         run: |
-          cargo install worker-build
+          cargo install --force worker-build
           cd worker && worker-build --release
