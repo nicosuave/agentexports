@@ -43,22 +43,6 @@ pub struct ClaudeState {
     pub updated_at: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CodexState {
-    pub term_key: String,
-    pub thread_id: String,
-    pub cwd: String,
-    pub updated_at: u64,
-    #[serde(default)]
-    pub tty: Option<String>,
-    #[serde(default)]
-    pub tmux_pane: Option<String>,
-    #[serde(default)]
-    pub iterm_session_id: Option<String>,
-    #[serde(default)]
-    pub session_id: Option<String>,
-}
-
 #[derive(Debug, Clone)]
 struct SessionMeta {
     id: String,
@@ -129,10 +113,6 @@ pub fn cache_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".cache"))
 }
 
-fn default_notify_log_path() -> Result<PathBuf> {
-    Ok(cache_dir()?.join(APP_NAME).join("notify.log"))
-}
-
 pub fn codex_sessions_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("AGENTEXPORT_CODEX_SESSIONS_DIR") {
         return Ok(PathBuf::from(dir));
@@ -160,10 +140,6 @@ fn state_dir(tool: Tool) -> Result<PathBuf> {
 
 pub fn claude_state_path(term_key: &str) -> Result<PathBuf> {
     Ok(state_dir(Tool::Claude)?.join(format!("{term_key}.json")))
-}
-
-pub fn codex_state_path(term_key: &str) -> Result<PathBuf> {
-    Ok(state_dir(Tool::Codex)?.join(format!("{term_key}.json")))
 }
 
 pub fn compute_term_key(tty: &str, tmux_pane: Option<&str>, iterm_session_id: Option<&str>) -> String {
@@ -328,62 +304,6 @@ pub fn handle_claude_sessionstart(input: &str) -> Result<ClaudeState> {
     Ok(state)
 }
 
-pub fn handle_codex_notify(input: &str, term_key_override: Option<String>) -> Result<CodexState> {
-    let value: serde_json::Value = serde_json::from_str(input).context("invalid JSON")?;
-    let thread_id = extract_string_field(&value, &["thread-id", "thread_id", "threadId"]);
-    let session_id = extract_string_field(&value, &["session-id", "session_id", "sessionId"]);
-    let thread_id = match (thread_id, session_id.as_ref()) {
-        (Some(thread_id), _) => thread_id,
-        (None, Some(session_id)) => session_id.clone(),
-        (None, None) => bail!("missing thread-id/session-id"),
-    };
-    let cwd = extract_string_field(&value, &["cwd", "working_dir", "workingDir"]).unwrap_or_default();
-    let identity = current_terminal_identity()?;
-    let term_key = match term_key_override {
-        Some(key) => key,
-        None => compute_term_key(
-            &identity.tty,
-            identity.tmux_pane.as_deref(),
-            identity.iterm_session_id.as_deref(),
-        ),
-    };
-    let state = CodexState {
-        term_key: term_key.clone(),
-        thread_id,
-        cwd,
-        updated_at: now_unix(),
-        tty: Some(identity.tty),
-        tmux_pane: identity.tmux_pane,
-        iterm_session_id: identity.iterm_session_id,
-        session_id,
-    };
-    write_codex_state(&state)?;
-    let payload = serde_json::json!({
-        "timestamp": now_unix(),
-        "term_key": state.term_key,
-        "thread_id": state.thread_id,
-        "session_id": state.session_id,
-        "cwd": state.cwd,
-        "tty": state.tty,
-        "tmux_pane": state.tmux_pane,
-        "iterm_session_id": state.iterm_session_id,
-        "raw": value,
-    });
-    let log_paths = [
-        default_notify_log_path().ok(),
-        std::env::var("AGENTEXPORT_NOTIFY_LOG").ok().map(PathBuf::from),
-    ];
-    for path in log_paths.into_iter().flatten() {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = writeln!(file, "{}", payload);
-        }
-    }
-    Ok(state)
-}
-
 pub fn write_claude_state(state: &ClaudeState) -> Result<PathBuf> {
     let dir = state_dir(Tool::Claude)?;
     fs::create_dir_all(&dir)?;
@@ -393,25 +313,8 @@ pub fn write_claude_state(state: &ClaudeState) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub fn write_codex_state(state: &CodexState) -> Result<PathBuf> {
-    let dir = state_dir(Tool::Codex)?;
-    fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{}.json", state.term_key));
-    let data = serde_json::to_string_pretty(state)?;
-    fs::write(&path, data)?;
-    Ok(path)
-}
-
 pub fn read_claude_state(term_key: &str) -> Result<ClaudeState> {
     let path = claude_state_path(term_key)?;
-    let data = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-    let state = serde_json::from_str(&data)?;
-    Ok(state)
-}
-
-pub fn read_codex_state(term_key: &str) -> Result<CodexState> {
-    let path = codex_state_path(term_key)?;
     let data = fs::read_to_string(&path)
         .with_context(|| format!("failed to read {}", path.display()))?;
     let state = serde_json::from_str(&data)?;
