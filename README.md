@@ -1,14 +1,12 @@
 # agentexport
 
-Export and share Claude Code and Codex session transcripts with zero-knowledge encryption.
+Share Claude Code and Codex session transcripts with zero-knowledge encryption.
 
 ## Features
 
-- **Zero-knowledge sharing**: Transcripts are encrypted client-side before upload. The server only sees encrypted blobs and cannot read your content.
-- **Privacy by design**: Decryption keys live only in URL fragments, which browsers never send to servers.
-- **Compression**: Gzip compression before encryption reduces upload size.
-- **Expiration**: Shared transcripts auto-expire after 30 days.
-- **Terminal-aware**: Automatically tracks sessions per terminal (supports tmux, iTerm2).
+- **Zero-knowledge sharing**: Transcripts are encrypted client-side. The server only sees encrypted blobs.
+- **Privacy by design**: Decryption keys live only in URL fragments, never sent to servers.
+- **Works with Claude Code and Codex**: Just run `/agentexport` in Claude or the publish command in Codex.
 
 ## Installation
 
@@ -16,54 +14,59 @@ Export and share Claude Code and Codex session transcripts with zero-knowledge e
 cargo install --path .
 ```
 
-## Quick Start
-
-### Share a transcript
+Then run setup to install skills and hooks:
 
 ```bash
-# Share current Claude session
-agentexport publish --tool claude --upload-url https://agentexports.com
-# => https://agentexports.com/v/abc123#decryptionKey...
-
-# Share a Codex session
-agentexport publish --tool codex --upload-url https://agentexports.com
+agentexport setup-skills
 ```
 
-The output URL contains everything needed to view the transcript. Anyone with the URL can decrypt and view it.
+This will:
+- **Claude Code**: Install the `/agentexport` skill and a SessionStart hook
+- **Codex**: Install the publish prompt
 
-### Local export (no upload)
+Restart Claude/Codex after setup.
 
-```bash
-# Export to local HTML file
-agentexport publish --tool claude --render
+## Usage
 
-# Export with custom output path
-agentexport publish --tool claude --out ./my-export.jsonl.gz
+### Claude Code
+
+Just type `/agentexport` in any session:
+
+```
+/agentexport
 ```
 
-## Architecture
+Claude will publish your current session and return a shareable URL like:
+```
+https://agentexports.com/v/abc123#SGVsbG8gV29ybGQh...
+```
+
+### Codex
+
+Use the publish command to share your current session.
+
+## How It Works
 
 ```
 ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│   CLI           │      │   CF Worker     │      │   Browser       │
+│   Your Terminal │      │   Server (R2)   │      │   Recipient     │
 │                 │      │                 │      │                 │
-│ 1. Render HTML  │      │                 │      │                 │
-│ 2. Gzip         │ POST │ Store in R2     │ GET  │ Fetch blob      │
-│ 3. Encrypt      │─────>│ (encrypted)     │─────>│ Decrypt (AES)   │
-│ 4. Upload       │      │                 │      │ Decompress      │
-│                 │      │                 │      │ Display         │
+│ 1. Gzip         │      │                 │      │                 │
+│ 2. Encrypt      │ POST │ Store encrypted │ GET  │ Fetch blob      │
+│ 3. Upload       │─────>│ blob (opaque)   │─────>│ Decrypt in JS   │
+│ 4. Get URL      │      │                 │      │ Decompress      │
+│                 │      │                 │      │ View transcript │
 └─────────────────┘      └─────────────────┘      └─────────────────┘
                                                           │
                               Key in URL fragment ────────┘
                               (never sent to server)
 ```
 
-### Encryption
-
-- **Algorithm**: AES-256-GCM
-- **Key**: 256-bit random, base64url encoded in URL fragment
-- **IV**: 96-bit random, prepended to ciphertext
-- **Compression**: Gzip before encryption
+The server operator cannot read your transcripts because:
+1. Content is encrypted with AES-256-GCM before upload
+2. The decryption key is placed in the URL fragment (`#key`)
+3. Browsers never send URL fragments to servers
+4. Decryption happens entirely in the recipient's browser
 
 ### URL Format
 
@@ -71,42 +74,7 @@ agentexport publish --tool claude --out ./my-export.jsonl.gz
 https://agentexports.com/v/{id}#{key}
                             │    │
                             │    └── Base64url decryption key (never sent to server)
-                            └─────── Content-addressed blob ID (SHA-256 prefix)
-```
-
-## CLI Reference
-
-### `agentexport publish`
-
-Export and optionally upload a transcript.
-
-```
-Options:
-  --tool <claude|codex>     Tool to export from (required)
-  --term-key <KEY>          Terminal key (auto-detected if not provided)
-  --transcript <PATH>       Path to transcript file (auto-resolved if not provided)
-  --max-age-minutes <N>     Max age of transcript to accept [default: 10]
-  --out <PATH>              Output path for gzip file
-  --render                  Also render HTML locally
-  --upload-url <URL>        Upload to sharing service
-  --dry-run                 Skip actual upload
-```
-
-### `agentexport term-key`
-
-Print the current terminal's unique key.
-
-```bash
-agentexport term-key
-# => a1b2c3d4e5f6...
-```
-
-### `agentexport setup-skills`
-
-Interactive setup for Claude/Codex skill integration.
-
-```bash
-agentexport setup-skills
+                            └─────── Content ID (SHA-256 prefix)
 ```
 
 ## Self-Hosting
@@ -128,13 +96,14 @@ wrangler deploy --env production
 1. In Cloudflare dashboard, go to Workers & Pages
 2. Select `agentexport-share`
 3. Settings > Triggers > Add Custom Domain
-4. Enter your domain (e.g., `share.yourdomain.com`)
+4. Enter your domain
 
-### Environment Variables
+Then update the skill to use your domain:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TTL_DAYS` | `30` | Days until transcripts expire |
+```bash
+# Edit ~/.claude/skills/agentexport/SKILL.md
+# Change --upload-url to your domain
+```
 
 ## Development
 
@@ -156,7 +125,7 @@ cargo install worker-build
 # Terminal 1: Start worker
 cd worker && wrangler dev --port 8787
 
-# Terminal 2: Test upload
+# Terminal 2: Test
 agentexport publish --tool claude --upload-url http://localhost:8787
 ```
 
@@ -170,32 +139,15 @@ cargo test --lib
 cargo test --test e2e -- --ignored
 ```
 
-## How It Works
+## Encryption Details
 
-### Session Tracking
-
-agentexport tracks terminal sessions using a hash of:
-- TTY device path
-- tmux pane ID (if in tmux)
-- iTerm2 session ID (if in iTerm2)
-
-This allows multiple concurrent sessions without confusion.
-
-### Transcript Resolution
-
-**Claude**: Uses environment variables set by Claude Code hooks, or reads from cached state.
-
-**Codex**: Scans `~/.codex/sessions/` and matches against `~/.codex/history.jsonl` to find the most recent interactive session for the current directory.
-
-### Security Model
-
-1. **Client encrypts**: HTML is gzip-compressed, then encrypted with a random AES-256-GCM key
-2. **Server stores blobs**: Worker receives opaque encrypted bytes, stores in R2
-3. **Key in fragment**: The decryption key is placed in the URL fragment (`#key`)
-4. **Fragments are private**: Browsers never send URL fragments to servers
-5. **Client decrypts**: Viewer page fetches blob, decrypts using Web Crypto API
-
-The server operator (you or agentexports.com) cannot read transcript contents because they never receive the decryption key.
+| Component | Value |
+|-----------|-------|
+| Algorithm | AES-256-GCM |
+| Key | 256 bits, random |
+| IV/Nonce | 96 bits, random |
+| Compression | Gzip before encryption |
+| Expiration | 30 days |
 
 ## License
 
