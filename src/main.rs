@@ -43,8 +43,12 @@ enum Commands {
         out: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
+        /// Upload URL (default: https://agentexports.com)
+        #[arg(long, default_value = "https://agentexports.com")]
+        upload_url: String,
+        /// Skip uploading to server
         #[arg(long)]
-        upload_url: Option<String>,
+        no_upload: bool,
         #[arg(long)]
         render: bool,
     },
@@ -96,9 +100,11 @@ fn run() -> Result<()> {
             out,
             dry_run,
             upload_url,
+            no_upload,
             render,
         } => {
-            let has_upload_url = upload_url.is_some();
+            let effective_upload_url = if no_upload { None } else { Some(upload_url) };
+            let has_upload_url = effective_upload_url.is_some();
             let result = publish(PublishOptions {
                 tool,
                 term_key,
@@ -106,7 +112,7 @@ fn run() -> Result<()> {
                 max_age_minutes,
                 out,
                 dry_run,
-                upload_url,
+                upload_url: effective_upload_url,
                 render,
             })?;
 
