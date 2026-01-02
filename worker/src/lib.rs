@@ -11,6 +11,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let router = Router::new();
 
     router
+        .get("/", |_, _| Response::from_html(homepage_html()))
         .post_async("/upload", handle_upload)
         .get_async("/v/:id", handle_viewer)
         .get_async("/blob/:id", handle_blob)
@@ -256,6 +257,120 @@ async fn handle_cors_preflight(_req: Request, _ctx: RouteContext<()>) -> Result<
         .headers_mut()
         .set("Access-Control-Max-Age", "86400")?;
     Ok(response)
+}
+
+fn homepage_html() -> String {
+    r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>agentexports</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            max-width: 600px;
+            padding: 2rem;
+            text-align: center;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .tagline {
+            font-size: 1.25rem;
+            color: #888;
+            margin-bottom: 2rem;
+        }
+        .features {
+            text-align: left;
+            margin: 2rem 0;
+            padding: 1.5rem;
+            background: #111;
+            border-radius: 8px;
+            border: 1px solid #222;
+        }
+        .features h2 {
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #666;
+            margin-bottom: 1rem;
+        }
+        .features ul {
+            list-style: none;
+        }
+        .features li {
+            padding: 0.5rem 0;
+            color: #aaa;
+        }
+        .features li::before {
+            content: "→ ";
+            color: #667eea;
+        }
+        .links {
+            margin-top: 2rem;
+        }
+        .links a {
+            color: #667eea;
+            text-decoration: none;
+            margin: 0 1rem;
+        }
+        .links a:hover {
+            text-decoration: underline;
+        }
+        code {
+            background: #1a1a1a;
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>agentexports</h1>
+        <p class="tagline">Zero-knowledge transcript sharing for Claude Code and Codex</p>
+
+        <div class="features">
+            <h2>How it works</h2>
+            <ul>
+                <li>Transcripts are encrypted locally before upload</li>
+                <li>Server only sees encrypted blobs</li>
+                <li>Decryption key stays in URL fragment (never sent to server)</li>
+                <li>Auto-expires after 30 days</li>
+            </ul>
+        </div>
+
+        <div class="features">
+            <h2>Usage</h2>
+            <ul>
+                <li>Install: <code>cargo install agentexport</code></li>
+                <li>Setup: <code>agentexport setup-skills</code></li>
+                <li>Share: type <code>/agentexport</code> in Claude Code</li>
+            </ul>
+        </div>
+
+        <div class="links">
+            <a href="https://github.com/nicosuave/agentexports">GitHub</a>
+        </div>
+    </div>
+</body>
+</html>
+"##.to_string()
 }
 
 fn viewer_html(blob_id: &str) -> String {
