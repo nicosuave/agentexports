@@ -78,6 +78,7 @@ fn run() -> Result<()> {
             upload_url,
             render,
         } => {
+            let has_upload_url = upload_url.is_some();
             let result = publish(PublishOptions {
                 tool,
                 term_key,
@@ -88,7 +89,19 @@ fn run() -> Result<()> {
                 upload_url,
                 render,
             })?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+
+            // When uploading, print just the share URL to stdout (for piping)
+            // Otherwise, print full JSON result
+            if has_upload_url {
+                if let Some(url) = &result.share_url {
+                    println!("{url}");
+                } else {
+                    // No URL returned (dry-run or error), print JSON for debugging
+                    eprintln!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
         }
         Commands::SetupSkills => {
             setup_skills_interactive()?;

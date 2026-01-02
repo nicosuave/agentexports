@@ -13,7 +13,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use time::{OffsetDateTime, format_description};
 use walkdir::WalkDir;
 
+mod crypto;
 mod skills;
+mod upload;
 
 pub use skills::setup_skills_interactive;
 
@@ -81,6 +83,7 @@ pub struct PublishResult {
     pub session_id: Option<String>,
     pub thread_id: Option<String>,
     pub render_path: Option<String>,
+    pub share_url: Option<String>,
     pub note: String,
 }
 
@@ -1413,19 +1416,15 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
     gzip_to_file(&transcript_path, &gzip_path)?;
     let gzip_bytes = fs::metadata(&gzip_path)?.len();
 
-    let render_path = if options.render {
+    // Render HTML if requested OR if we're uploading (upload requires HTML)
+    let should_render = options.render || options.upload_url.is_some();
+    let (render_path, html_content) = if should_render {
         let cwd = match options.tool {
             Tool::Claude => read_claude_state(&term_key).ok().map(|state| state.cwd),
             Tool::Codex => read_session_meta(&transcript_path)
                 .ok()
                 .and_then(|meta| meta.and_then(|meta| meta.cwd)),
         };
-        let render_path = default_render_path(options.tool, &term_key)?;
-        fs::create_dir_all(
-            render_path
-                .parent()
-                .unwrap_or_else(|| Path::new(".")),
-        )?;
         let html = render_share_page(
             options.tool,
             &term_key,
@@ -1434,16 +1433,35 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
             thread_id.as_deref(),
             cwd.as_deref(),
         )?;
-        fs::write(&render_path, html)?;
-        Some(render_path.display().to_string())
+
+        // Only write to disk if --render was explicitly requested
+        let path = if options.render {
+            let render_path = default_render_path(options.tool, &term_key)?;
+            fs::create_dir_all(
+                render_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new(".")),
+            )?;
+            fs::write(&render_path, &html)?;
+            Some(render_path.display().to_string())
+        } else {
+            None
+        };
+        (path, Some(html))
     } else {
-        None
+        (None, None)
     };
 
-    let note = if options.dry_run || options.upload_url.is_none() {
-        "upload skipped (no upload_url or dry-run)".to_string()
+    // Handle upload
+    let (share_url, note) = if options.dry_run {
+        (None, "upload skipped (dry-run)".to_string())
+    } else if let Some(upload_url) = &options.upload_url {
+        let html = html_content.expect("HTML should be rendered for upload");
+        let encrypted = crypto::encrypt_html(&html)?;
+        let url = upload::upload_blob(upload_url, &encrypted.blob, &encrypted.key_b64)?;
+        (Some(url), "uploaded successfully".to_string())
     } else {
-        "upload not implemented yet".to_string()
+        (None, "upload skipped (no upload_url)".to_string())
     };
 
     Ok(PublishResult {
@@ -1458,6 +1476,7 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
         session_id,
         thread_id,
         render_path,
+        share_url,
         note,
     })
 }
