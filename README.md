@@ -11,7 +11,7 @@ Share Claude Code and Codex session transcripts with zero-knowledge encryption.
 ## Installation
 
 ```bash
-cargo install --path .
+curl -fsSL https://agentexports.com/setup | sh
 ```
 
 Then run setup to install skills and hooks:
@@ -147,7 +147,7 @@ cargo test --test e2e -- --ignored
 | Key | 256 bits, random |
 | IV/Nonce | 96 bits, random |
 | Compression | Gzip before encryption |
-| Expiration | 30 days |
+| Expiration | 30 days (configurable: 30, 60, 90, 180, 365, or forever) |
 
 ## License
 
