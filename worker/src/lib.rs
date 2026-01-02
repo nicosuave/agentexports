@@ -267,107 +267,46 @@ fn homepage_html() -> String {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agentexports</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0a0a0a;
-            color: #e0e0e0;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .container {
             max-width: 600px;
-            padding: 2rem;
-            text-align: center;
+            margin: 4rem auto;
+            padding: 0 1rem;
+            line-height: 1.6;
         }
-        h1 {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        .tagline {
-            font-size: 1.25rem;
-            color: #888;
-            margin-bottom: 2rem;
-        }
-        .features {
-            text-align: left;
-            margin: 2rem 0;
-            padding: 1.5rem;
-            background: #111;
-            border-radius: 8px;
-            border: 1px solid #222;
-        }
-        .features h2 {
-            font-size: 0.875rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: #666;
-            margin-bottom: 1rem;
-        }
-        .features ul {
-            list-style: none;
-        }
-        .features li {
-            padding: 0.5rem 0;
-            color: #aaa;
-        }
-        .features li::before {
-            content: "→ ";
-            color: #667eea;
-        }
-        .links {
-            margin-top: 2rem;
-        }
-        .links a {
-            color: #667eea;
-            text-decoration: none;
-            margin: 0 1rem;
-        }
-        .links a:hover {
-            text-decoration: underline;
-        }
-        code {
-            background: #1a1a1a;
-            padding: 0.2em 0.4em;
-            border-radius: 4px;
-            font-size: 0.9em;
-        }
+        h1 { margin-bottom: 0.5rem; }
+        .tagline { color: #666; margin-bottom: 2rem; }
+        h2 { font-size: 1rem; margin-top: 2rem; color: #333; }
+        ul { margin: 0.5rem 0; padding-left: 1.5rem; }
+        li { margin: 0.25rem 0; }
+        code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }
+        a { color: #0066cc; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>agentexports</h1>
-        <p class="tagline">Zero-knowledge transcript sharing for Claude Code and Codex</p>
+    <h1>agentexports</h1>
+    <p class="tagline">Zero-knowledge transcript sharing for Claude Code and Codex</p>
 
-        <div class="features">
-            <h2>How it works</h2>
-            <ul>
-                <li>Transcripts are encrypted locally before upload</li>
-                <li>Server only sees encrypted blobs</li>
-                <li>Decryption key stays in URL fragment (never sent to server)</li>
-                <li>Auto-expires after 30 days</li>
-            </ul>
-        </div>
+    <h2>How it works</h2>
+    <ul>
+        <li>Transcripts are encrypted locally before upload</li>
+        <li>Server only sees encrypted blobs</li>
+        <li>Decryption key stays in URL fragment (never sent to server)</li>
+        <li>Auto-expires after 30 days</li>
+    </ul>
 
-        <div class="features">
-            <h2>Usage</h2>
-            <ul>
-                <li>Install: <code>cargo install agentexport</code></li>
-                <li>Setup: <code>agentexport setup-skills</code></li>
-                <li>Share: type <code>/agentexport</code> in Claude Code</li>
-            </ul>
-        </div>
+    <h2>Usage</h2>
+    <ul>
+        <li>Install: <code>cargo install agentexport</code></li>
+        <li>Setup: <code>agentexport setup-skills</code></li>
+        <li>Claude Code: type <code>/agentexport</code></li>
+        <li>Codex: use the publish prompt</li>
+    </ul>
 
-        <div class="links">
-            <a href="https://github.com/nicosuave/agentexports">GitHub</a>
-        </div>
-    </div>
+    <h2>Links</h2>
+    <ul>
+        <li><a href="https://github.com/nicosuave/agentexports">GitHub</a></li>
+    </ul>
 </body>
 </html>
 "##.to_string()
