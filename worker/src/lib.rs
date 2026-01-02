@@ -347,17 +347,17 @@ fn homepage_html() -> String {
     <script>
     function copyCmd(el) {
         const text = el.querySelector('code').textContent;
-        navigator.clipboard.writeText(text);
         const tip = el.querySelector('.tooltip');
-        tip.textContent = 'Copied to clipboard';
-        tip.classList.add('copied');
-        setTimeout(() => {
-            tip.textContent = 'Click to copy';
-            tip.classList.remove('copied');
-        }, 2000);
+        navigator.clipboard.writeText(text).then(() => {
+            tip.textContent = 'Copied to clipboard';
+            tip.classList.add('copied');
+            setTimeout(() => {
+                tip.textContent = 'Click to copy';
+                tip.classList.remove('copied');
+            }, 2000);
+        });
     }
     </script>
-    <p>Or: <code>cargo install agentexport</code></p>
 
     <h2>Usage</h2>
     <p>Run <code>agentexport setup-skills</code> to install the skill, then type <code>/agentexport</code> in Claude Code or Codex.</p>
