@@ -98,11 +98,10 @@ wrangler deploy --env production
 3. Settings > Triggers > Add Custom Domain
 4. Enter your domain
 
-Then update the skill to use your domain:
+Then configure the CLI to use your domain:
 
 ```bash
-# Edit ~/.claude/skills/agentexport/SKILL.md
-# Change --upload-url to your domain
+agentexport config set upload_url https://your-domain.com
 ```
 
 ## Development
