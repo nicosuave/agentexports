@@ -113,7 +113,7 @@ fn test_viewer_page_served() {
 
     let html = response.into_string().unwrap();
     assert!(html.contains("<!DOCTYPE html>"));
-    assert!(html.contains("Decrypting transcript"));
+    assert!(html.contains("Decrypting..."));
     assert!(html.contains("crypto.subtle.decrypt"));
 
     println!("✓ Viewer page test PASSED!");
@@ -126,7 +126,8 @@ fn test_blob_not_found() {
     let worker_url =
         std::env::var("WORKER_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
-    let response = ureq::get(&format!("{}/blob/0000000000000000", worker_url)).call();
+    // ID format: g (TTL prefix) + 16 hex chars = 17 chars total
+    let response = ureq::get(&format!("{}/blob/g0000000000000000", worker_url)).call();
 
     match response {
         Err(ureq::Error::Status(404, _)) => println!("✓ 404 test PASSED!"),
