@@ -14,7 +14,9 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/upload", handle_upload)
         .get_async("/v/:id", handle_viewer)
         .get_async("/blob/:id", handle_blob)
+        .delete_async("/blob/:id", handle_delete)
         .options_async("/upload", handle_cors_preflight)
+        .options_async("/blob/:id", handle_cors_preflight)
         .run(req, env)
         .await
 }
@@ -22,8 +24,8 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 fn cors_headers() -> Headers {
     let headers = Headers::new();
     let _ = headers.set("Access-Control-Allow-Origin", "*");
-    let _ = headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    let _ = headers.set("Access-Control-Allow-Headers", "Content-Type");
+    let _ = headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    let _ = headers.set("Access-Control-Allow-Headers", "Content-Type, X-Key-Hash");
     headers
 }
 
@@ -66,6 +68,15 @@ async fn handle_upload(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
         }
     }
 
+    // Get key hash from header (required for delete auth)
+    let key_hash = req
+        .headers()
+        .get("X-Key-Hash")?
+        .unwrap_or_default();
+    if key_hash.is_empty() || key_hash.len() != 64 {
+        return with_cors(Response::error("Missing or invalid X-Key-Hash header", 400)?);
+    }
+
     let body = req.bytes().await?;
     if body.len() > MAX_BLOB_SIZE {
         return with_cors(Response::error("Blob too large", 413)?);
@@ -77,17 +88,29 @@ async fn handle_upload(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     let id = generate_id(&body);
     let bucket = ctx.env.bucket("TRANSCRIPTS")?;
 
-    // Store with timestamp metadata
-    let timestamp = current_timestamp().to_string();
+    // Calculate expiration
+    let ttl_days = ctx
+        .env
+        .var("TTL_DAYS")
+        .map(|v| v.to_string().parse().unwrap_or(DEFAULT_TTL_DAYS))
+        .unwrap_or(DEFAULT_TTL_DAYS);
+    let uploaded_at = current_timestamp();
+    let expires_at = uploaded_at + (ttl_days * 24 * 60 * 60);
+
+    // Store with metadata
     let mut metadata = std::collections::HashMap::new();
-    metadata.insert("uploaded_at".to_string(), timestamp);
+    metadata.insert("uploaded_at".to_string(), uploaded_at.to_string());
+    metadata.insert("key_hash".to_string(), key_hash);
     bucket
         .put(&id, body)
         .custom_metadata(metadata)
         .execute()
         .await?;
 
-    let response_body = serde_json::json!({ "id": id });
+    let response_body = serde_json::json!({
+        "id": id,
+        "expires_at": expires_at
+    });
     with_cors(Response::from_json(&response_body)?)
 }
 
@@ -180,6 +203,50 @@ async fn handle_viewer(_req: Request, ctx: RouteContext<()>) -> Result<Response>
         .set("X-Content-Type-Options", "nosniff")?;
 
     Ok(response)
+}
+
+async fn handle_delete(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let id = ctx.param("id").unwrap();
+
+    if !is_valid_id(id) {
+        return with_cors(Response::error("Invalid ID", 400)?);
+    }
+
+    // Get key hash from header
+    let key_hash = req
+        .headers()
+        .get("X-Key-Hash")?
+        .unwrap_or_default();
+    if key_hash.is_empty() {
+        return with_cors(Response::error("Missing X-Key-Hash header", 401)?);
+    }
+
+    let bucket = ctx.env.bucket("TRANSCRIPTS")?;
+
+    // Check blob exists and verify key hash
+    match bucket.head(id).await? {
+        Some(object) => {
+            let stored_hash = object
+                .custom_metadata()
+                .ok()
+                .and_then(|m| m.get("key_hash").cloned())
+                .unwrap_or_default();
+
+            if stored_hash.is_empty() {
+                // Legacy blob without key_hash - can't be deleted via API
+                return with_cors(Response::error("Blob predates delete support", 403)?);
+            }
+
+            if stored_hash != key_hash {
+                return with_cors(Response::error("Invalid key hash", 401)?);
+            }
+
+            // Delete the blob
+            bucket.delete(id).await?;
+            with_cors(Response::empty()?.with_status(204))
+        }
+        None => with_cors(Response::error("Not found", 404)?),
+    }
 }
 
 async fn handle_cors_preflight(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
