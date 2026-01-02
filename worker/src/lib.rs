@@ -279,11 +279,12 @@ fn homepage_html() -> String {
             padding: 0 1rem;
             line-height: 1.6;
         }
-        h1 { margin-bottom: 0.5rem; }
+        h1 { margin-bottom: 0.25rem; }
+        h1 a { color: inherit; text-decoration: none; }
+        h1 a:hover { text-decoration: underline; }
         .tagline { color: #666; margin-bottom: 2rem; }
         h2 { font-size: 1rem; margin-top: 2rem; color: #333; }
-        ul { margin: 0.5rem 0; padding-left: 1.5rem; }
-        li { margin: 0.25rem 0; }
+        p { margin: 0.5rem 0; }
         code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }
         a { color: #0066cc; }
         .install-box {
@@ -313,35 +314,21 @@ fn homepage_html() -> String {
     </style>
 </head>
 <body>
-    <h1>agentexports</h1>
-    <p class="tagline">Zero-knowledge transcript sharing for Claude Code and Codex</p>
-
-    <h2>How it works</h2>
-    <ul>
-        <li>Transcripts are encrypted locally before upload</li>
-        <li>Server only sees encrypted blobs</li>
-        <li>Decryption key stays in URL fragment (never sent to server)</li>
-        <li>Auto-expires after 30 days</li>
-    </ul>
+    <h1><a href="https://github.com/nicosuave/agentexports">agentexports</a></h1>
+    <p class="tagline">Share Claude Code and Codex transcripts. Encrypted locally, decryption key never leaves your URL.</p>
 
     <h2>Install</h2>
     <div class="install-box">
         <code id="install-cmd">curl -fsSL https://agentexports.com/setup | sh</code>
         <button onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)">Copy</button>
     </div>
-    <p>Or via cargo: <code>cargo install agentexport</code></p>
+    <p>Or: <code>cargo install agentexport</code></p>
 
     <h2>Usage</h2>
-    <ul>
-        <li>Setup: <code>agentexport setup-skills</code></li>
-        <li>Claude Code: type <code>/agentexport</code></li>
-        <li>Codex: type <code>/agentexport</code></li>
-    </ul>
+    <p>Run <code>agentexport setup-skills</code> to install the skill, then type <code>/agentexport</code> in Claude Code or Codex.</p>
 
-    <h2>Links</h2>
-    <ul>
-        <li><a href="https://github.com/nicosuave/agentexports">GitHub</a></li>
-    </ul>
+    <h2>How it works</h2>
+    <p>Transcripts are encrypted client-side before upload. The server only stores encrypted blobs. The decryption key lives in the URL fragment and is never sent to the server. Shares auto-expire after 30 days.</p>
 </body>
 </html>
 "##.to_string()
