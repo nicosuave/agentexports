@@ -14,6 +14,7 @@ use time::{OffsetDateTime, format_description};
 use walkdir::WalkDir;
 
 mod crypto;
+pub mod shares;
 mod skills;
 mod upload;
 
@@ -1458,8 +1459,23 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
     } else if let Some(upload_url) = &options.upload_url {
         let html = html_content.expect("HTML should be rendered for upload");
         let encrypted = crypto::encrypt_html(&html)?;
-        let url = upload::upload_blob(upload_url, &encrypted.blob, &encrypted.key_b64)?;
-        (Some(url), "uploaded successfully".to_string())
+        let result = upload::upload_blob(upload_url, &encrypted.blob, &encrypted.key_b64)?;
+
+        // Save share locally for management
+        let share = shares::Share {
+            id: result.id,
+            key: result.key,
+            key_hash: result.key_hash,
+            upload_url: result.upload_url,
+            created_at: time::OffsetDateTime::now_utc(),
+            expires_at: time::OffsetDateTime::from_unix_timestamp(result.expires_at as i64)
+                .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+            tool: options.tool.as_str().to_string(),
+            transcript_path: transcript_path.display().to_string(),
+        };
+        shares::save_share(&share)?;
+
+        (Some(result.share_url), "uploaded successfully".to_string())
     } else {
         (None, "upload skipped (no upload_url)".to_string())
     };

@@ -12,6 +12,8 @@ use agentexport::{
     setup_skills_interactive,
 };
 
+mod shares_cmd;
+
 #[derive(Parser)]
 #[command(name = "agentexport", version, about = "Local agent export helper")]
 struct Cli {
@@ -48,6 +50,24 @@ enum Commands {
     },
     #[command(name = "setup-skills")]
     SetupSkills,
+
+    /// Manage shared transcripts
+    #[command(name = "shares")]
+    Shares {
+        #[command(subcommand)]
+        action: Option<SharesAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SharesAction {
+    /// List all shares
+    List,
+    /// Delete a share from the server
+    Unshare {
+        /// Share ID to delete
+        id: String,
+    },
 }
 
 fn main() {
@@ -105,6 +125,9 @@ fn run() -> Result<()> {
         }
         Commands::SetupSkills => {
             setup_skills_interactive()?;
+        }
+        Commands::Shares { action } => {
+            shares_cmd::run(action)?;
         }
     }
     Ok(())
