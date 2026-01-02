@@ -26,6 +26,7 @@ aes-gcm = "0.10"
 rand = "0.8"
 base64 = "0.22"
 ureq = { version = "2", features = ["json"] }
+toml = "0.9.10"
 
 [dev-dependencies]
 tempfile = "3"

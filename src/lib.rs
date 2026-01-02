@@ -13,11 +13,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use time::OffsetDateTime;
 use walkdir::WalkDir;
 
+pub mod config;
 mod crypto;
 pub mod shares;
 mod skills;
 mod upload;
 
+pub use config::Config;
 pub use skills::setup_skills_interactive;
 
 const APP_NAME: &str = "agentexport";

@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use agentexport::{
-    PublishOptions, Tool, handle_claude_sessionstart, publish, setup_skills_interactive,
+    Config, PublishOptions, Tool, handle_claude_sessionstart, publish, setup_skills_interactive,
 };
 
 mod shares_cmd;
@@ -36,17 +36,17 @@ enum Commands {
         out: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
-        /// Upload URL (default: https://agentexports.com)
-        #[arg(long, default_value = "https://agentexports.com")]
-        upload_url: String,
+        /// Upload URL (default from ~/.agentexport or https://agentexports.com)
+        #[arg(long)]
+        upload_url: Option<String>,
         /// Skip uploading to server
         #[arg(long)]
         no_upload: bool,
         #[arg(long)]
         render: bool,
-        /// TTL for the share: 30, 60, 90, 180, 365, or 0 for forever (default: 30)
-        #[arg(long, default_value_t = 30)]
-        ttl: u64,
+        /// TTL for the share: 30, 60, 90, 180, 365, or 0 for forever (default from ~/.agentexport or 30)
+        #[arg(long)]
+        ttl: Option<u64>,
     },
     #[command(name = "setup-skills")]
     SetupSkills,
@@ -56,6 +56,13 @@ enum Commands {
     Shares {
         #[command(subcommand)]
         action: Option<SharesAction>,
+    },
+
+    /// View or modify config (~/.agentexport)
+    #[command(name = "config")]
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
     },
 }
 
@@ -68,6 +75,21 @@ enum SharesAction {
         /// Share ID to delete
         id: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Show current config
+    Show,
+    /// Set a config value
+    Set {
+        /// Key to set (default_ttl, upload_url)
+        key: String,
+        /// Value to set
+        value: String,
+    },
+    /// Reset config to defaults
+    Reset,
 }
 
 fn main() {
@@ -96,7 +118,13 @@ fn run() -> Result<()> {
             render,
             ttl,
         } => {
-            let effective_upload_url = if no_upload { None } else { Some(upload_url) };
+            let config = Config::load().unwrap_or_default();
+            let effective_ttl = ttl.unwrap_or(config.default_ttl);
+            let effective_upload_url = if no_upload {
+                None
+            } else {
+                Some(upload_url.unwrap_or(config.upload_url))
+            };
             let has_upload_url = effective_upload_url.is_some();
             let result = publish(PublishOptions {
                 tool,
@@ -107,7 +135,7 @@ fn run() -> Result<()> {
                 dry_run,
                 upload_url: effective_upload_url,
                 render,
-                ttl_days: ttl,
+                ttl_days: effective_ttl,
             })?;
 
             // When uploading, print just the share URL to stdout (for piping)
@@ -128,6 +156,47 @@ fn run() -> Result<()> {
         }
         Commands::Shares { action } => {
             shares_cmd::run(action)?;
+        }
+        Commands::Config { action } => {
+            handle_config(action)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_config(action: Option<ConfigAction>) -> Result<()> {
+    match action {
+        None | Some(ConfigAction::Show) => {
+            let config = Config::load().unwrap_or_default();
+            println!("default_ttl = {}", config.default_ttl);
+            println!("upload_url = \"{}\"", config.upload_url);
+        }
+        Some(ConfigAction::Set { key, value }) => {
+            let mut config = Config::load().unwrap_or_default();
+            match key.as_str() {
+                "default_ttl" | "ttl" => {
+                    let ttl: u64 = value.parse().map_err(|_| {
+                        anyhow::anyhow!("invalid ttl: must be 0, 30, 60, 90, 180, or 365")
+                    })?;
+                    if !matches!(ttl, 0 | 30 | 60 | 90 | 180 | 365) {
+                        anyhow::bail!("invalid ttl: must be 0, 30, 60, 90, 180, or 365");
+                    }
+                    config.default_ttl = ttl;
+                }
+                "upload_url" | "url" => {
+                    config.upload_url = value;
+                }
+                _ => {
+                    anyhow::bail!("unknown config key: {key}");
+                }
+            }
+            let path = config.save()?;
+            println!("saved to {}", path.display());
+        }
+        Some(ConfigAction::Reset) => {
+            let config = Config::default();
+            let path = config.save()?;
+            println!("reset to defaults at {}", path.display());
         }
     }
     Ok(())
