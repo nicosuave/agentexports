@@ -545,13 +545,18 @@ fn viewer_html(blob_id: &str) -> String {
                         }
                         div class="meta-row" {
                             span #session-id class="session" {}
-                            div class="toggle" {
+                            div class="toggles" {
+                                label {
+                                    input #show-thinking type="checkbox" checked;
+                                    " Show thinking"
+                                }
                                 label {
                                     input #show-details type="checkbox";
                                     " Show tool calls"
                                 }
                             }
                         }
+                        div #token-summary class="token-summary" {}
                     }
                     section #messages class="messages hide-details" {}
                     footer {
@@ -604,8 +609,10 @@ h1 { font-size: 18px; font-weight: 600; }
 .date { font-size: 13px; color: #666; }
 .meta-row { display: flex; justify-content: space-between; align-items: center; }
 .session { font-family: ui-monospace, monospace; font-size: 12px; color: #999; }
-.toggle { font-size: 13px; color: #666; }
-.toggle label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.toggles { font-size: 13px; color: #666; display: flex; gap: 16px; }
+.toggles label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.token-summary { font-size: 13px; color: #666; margin-top: 8px; font-family: ui-monospace, monospace; }
+.token-summary:empty { display: none; }
 .messages { margin-top: 24px; }
 .msg { padding: 16px 0; }
 .msg-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
@@ -628,7 +635,11 @@ h1 { font-size: 18px; font-weight: 600; }
 .msg.tool, .msg.system { opacity: 0.7; }
 .msg.tool .msg-content { font-family: ui-monospace, monospace; font-size: 13px; white-space: pre-wrap; }
 .msg.system .msg-content { font-size: 13px; color: #666; border-left: 3px solid #ddd; padding-left: 12px; }
+.msg.thinking { opacity: 0.85; }
+.msg.thinking .msg-role { color: #7c3aed; }
+.msg.thinking .msg-content { font-size: 14px; color: #444; border-left: 3px solid #c4b5fd; padding-left: 12px; background: #faf5ff; margin-left: -12px; padding: 12px; border-radius: 0 6px 6px 0; }
 .hide-details .msg.tool, .hide-details .msg.system { display: none; }
+.hide-thinking .msg.thinking { display: none; }
 .raw { margin-top: 8px; }
 .raw summary { font-size: 12px; color: #666; cursor: pointer; }
 .raw pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 8px; max-height: 300px; }
@@ -789,6 +800,19 @@ function render(data) {{
     document.getElementById('show-details').addEventListener('change', function() {{
         document.getElementById('messages').classList.toggle('hide-details', !this.checked);
     }});
+
+    document.getElementById('show-thinking').addEventListener('change', function() {{
+        document.getElementById('messages').classList.toggle('hide-thinking', !this.checked);
+    }});
+
+    // Display token summary if available
+    const tokenEl = document.getElementById('token-summary');
+    const input = data.total_input_tokens || 0;
+    const output = data.total_output_tokens || 0;
+    if (input > 0 || output > 0) {{
+        const formatNum = n => n >= 1000 ? (n / 1000).toFixed(1) + 'K' : n.toString();
+        tokenEl.textContent = formatNum(input) + ' input · ' + formatNum(output) + ' output tokens';
+    }}
 }}
 
 async function main() {{

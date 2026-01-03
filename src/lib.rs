@@ -128,6 +128,19 @@ pub struct SharePayload {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
     pub messages: Vec<RenderedMessage>,
+    /// Token usage totals (if available)
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total_input_tokens: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total_output_tokens: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total_cache_read_tokens: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total_cache_creation_tokens: u64,
+}
+
+fn is_zero(val: &u64) -> bool {
+    *val == 0
 }
 
 fn now_unix() -> u64 {
@@ -874,6 +887,11 @@ struct ParseResult {
     messages: Vec<RenderedMessage>,
     /// Model usage counts for determining dominant model
     model_counts: HashMap<String, usize>,
+    /// Token usage totals
+    total_input_tokens: u64,
+    total_output_tokens: u64,
+    total_cache_read_tokens: u64,
+    total_cache_creation_tokens: u64,
 }
 
 impl ParseResult {
@@ -1074,6 +1092,22 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                     *result.model_counts.entry(m.clone()).or_insert(0) += 1;
                 }
 
+                // Extract token usage from message.usage
+                if let Some(usage) = value.pointer("/message/usage") {
+                    if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                        result.total_input_tokens += input;
+                    }
+                    if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                        result.total_output_tokens += output;
+                    }
+                    if let Some(cache_read) = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()) {
+                        result.total_cache_read_tokens += cache_read;
+                    }
+                    if let Some(cache_create) = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()) {
+                        result.total_cache_creation_tokens += cache_create;
+                    }
+                }
+
                 // Assistant message: message.content is array of blocks
                 if let Some(content_arr) =
                     value.pointer("/message/content").and_then(|v| v.as_array())
@@ -1141,7 +1175,31 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                                     model: None,
                                 });
                             }
-                            // Skip "thinking" blocks
+                            "thinking" => {
+                                if let Some(thinking_text) = block.get("thinking").and_then(|v| v.as_str()) {
+                                    if !thinking_text.trim().is_empty() {
+                                        result.messages.push(RenderedMessage {
+                                            role: "thinking".to_string(),
+                                            content: thinking_text.to_string(),
+                                            raw: None,
+                                            raw_label: None,
+                                            tool_use_id: None,
+                                            model: model.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                            "image" => {
+                                // Placeholder for images - don't include base64 data
+                                result.messages.push(RenderedMessage {
+                                    role: "assistant".to_string(),
+                                    content: "[Image]".to_string(),
+                                    raw: None,
+                                    raw_label: None,
+                                    tool_use_id: None,
+                                    model: model.clone(),
+                                });
+                            }
                             _ => {}
                         }
                     }
@@ -1188,6 +1246,10 @@ fn create_share_payload(
         model: parsed.dominant_model(),
         models,
         messages: parsed.messages,
+        total_input_tokens: parsed.total_input_tokens,
+        total_output_tokens: parsed.total_output_tokens,
+        total_cache_read_tokens: parsed.total_cache_read_tokens,
+        total_cache_creation_tokens: parsed.total_cache_creation_tokens,
     })
 }
 
