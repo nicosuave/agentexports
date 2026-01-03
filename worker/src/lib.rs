@@ -466,7 +466,7 @@ async fn fetch_r2_metrics(api_token: &str, account_id: &str) -> Option<String> {
 fn homepage_html(metrics_json: Option<String>) -> String {
     let (metrics_section, metrics_css) = if let Some(json) = metrics_json {
         let section = format!(r##"
-    <h2>Storage</h2>
+    <h2>Stats</h2>
     <div id="metrics-container" class="metrics-container"></div>
     <script>
     (function() {{
@@ -475,7 +475,6 @@ fn homepage_html(metrics_json: Option<String>) -> String {
         if (!points || points.length === 0) return;
 
         const latest = points[points.length - 1];
-        const days = points.length;
         const formatBytes = b => {{
             if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
             if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
@@ -483,20 +482,34 @@ fn homepage_html(metrics_json: Option<String>) -> String {
             return b + ' B';
         }};
         const formatNum = n => n.toLocaleString();
+        const formatDate = d => {{
+            const date = new Date(d);
+            return date.toLocaleDateString('en-US', {{ month: 'short', day: 'numeric' }});
+        }};
+
+        // Calculate actual day span from data
+        const firstDate = new Date(points[0].date);
+        const lastDate = new Date(points[points.length - 1].date);
+        const daySpan = Math.max(1, Math.round((lastDate - firstDate) / (1000 * 60 * 60 * 24)));
 
         container.innerHTML = `
             <div class="metrics-chart">
                 <canvas id="chart" width="672" height="80"></canvas>
+                <div class="metrics-tooltip" id="tooltip"></div>
+            </div>
+            <div class="metrics-axis">
+                <span>${{formatDate(points[0].date)}}</span>
+                <span>${{formatDate(points[points.length - 1].date)}}</span>
             </div>
             <div class="metrics-legend">
-                <span><span class="legend-line objects"></span>${{formatNum(latest.objects)}} objects</span>
-                <span><span class="legend-line storage"></span>${{formatBytes(latest.storage_bytes)}}</span>
-                <span class="metrics-period">${{days}} day${{days === 1 ? '' : 's'}}</span>
+                <span><span class="legend-line objects"></span>shares</span>
+                <span><span class="legend-line storage"></span>storage</span>
             </div>
         `;
 
         const canvas = document.getElementById('chart');
         const ctx = canvas.getContext('2d');
+        const tooltip = document.getElementById('tooltip');
         const w = canvas.width, h = canvas.height;
         const pad = {{ t: 8, r: 8, b: 8, l: 8 }};
         const cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
@@ -522,15 +535,33 @@ fn homepage_html(metrics_json: Option<String>) -> String {
 
         drawLine(points.map(p => p.objects), '#0066cc');
         drawLine(points.map(p => p.storage_bytes), '#888');
+
+        // Hover tooltip
+        canvas.addEventListener('mousemove', e => {{
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const x = (e.clientX - rect.left) * scaleX;
+            const idx = Math.round(((x - pad.l) / cw) * (points.length - 1));
+            if (idx >= 0 && idx < points.length) {{
+                const p = points[idx];
+                tooltip.innerHTML = `${{formatNum(p.objects)}} shares · ${{formatBytes(p.storage_bytes)}}`;
+                tooltip.style.opacity = '1';
+                tooltip.style.left = ((x / canvas.width) * 100) + '%';
+            }}
+        }});
+        canvas.addEventListener('mouseleave', () => {{
+            tooltip.style.opacity = '0';
+        }});
     }})();
     </script>
 "##, json = json);
         let css = r##"
-        .metrics-container { margin: 0.5rem 0; }
-        .metrics-chart { background: #fafafa; border-radius: 4px; padding: 8px; }
+        .metrics-container { margin: 0.5rem 0; position: relative; }
+        .metrics-chart { border-radius: 4px; padding: 8px 0; position: relative; }
         .metrics-chart canvas { display: block; width: 100%; height: auto; }
+        .metrics-tooltip { position: absolute; top: -24px; transform: translateX(-50%); background: #333; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+        .metrics-axis { display: flex; justify-content: space-between; font-size: 11px; color: #999; padding: 0 8px; }
         .metrics-legend { display: flex; gap: 1.5rem; margin-top: 0.5rem; font-size: 13px; color: #666; }
-        .metrics-period { margin-left: auto; }
         .legend-line { display: inline-block; width: 12px; height: 2px; margin-right: 6px; vertical-align: middle; }
         .legend-line.objects { background: #0066cc; }
         .legend-line.storage { background: #888; }
@@ -623,7 +654,7 @@ fn homepage_html(metrics_json: Option<String>) -> String {
         <a href="https://github.com/nicosuave/agentexport">GitHub</a>
     </header>
     <p class="tagline">Share Claude Code and Codex transcripts. No signup required.</p>
-{metrics_section}
+
     <h2>Install</h2>
     <div class="install-box" onclick="copyCmd(this)">
         <span class="tooltip">Click to copy</span>
@@ -665,6 +696,7 @@ fn homepage_html(metrics_json: Option<String>) -> String {
 
     <h2>Self-hosting</h2>
     <p>You can deploy your own instance using Cloudflare Workers and R2. See the <a href="https://github.com/nicosuave/agentexport#self-hosting">README</a> for instructions, then run <code>agentexport config set upload_url https://your-domain.com</code>.</p>
+{metrics_section}
 </body>
 </html>
 "##, metrics_section = metrics_section, metrics_css = metrics_css)
