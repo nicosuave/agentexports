@@ -21,7 +21,7 @@ agentexport setup-skills
 ```
 
 This will:
-- **Claude Code**: Install the `/agentexport` skill and a SessionStart hook
+- **Claude Code**: Install the `/agentexport` command and a SessionStart hook
 - **Codex**: Install the publish prompt
 
 Restart Claude/Codex after setup.

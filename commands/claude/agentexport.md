@@ -1,23 +1,21 @@
 ---
-name: agentexport
 description: Publish or share Claude Code session transcripts using the agentexport CLI. Use when the user asks to export, publish, or generate a share page for a Claude session.
+allowed-tools: Bash(agentexport:*)
 ---
 
-# Agent Export (Claude)
+# Agent Export
+
+Publish the current Claude session transcript using agentexport.
 
 ## Instructions
 
-1. Use the agentexport CLI to publish the current Claude session transcript.
-2. Prefer the environment variables set by the SessionStart hook:
-   - `AGENTEXPORT_CLAUDE_TRANSCRIPT_PATH`
-
-Run:
+Use the environment variable set by the SessionStart hook:
 
 ```
 agentexport publish --tool claude --transcript "$AGENTEXPORT_CLAUDE_TRANSCRIPT_PATH" --render
 ```
 
-If those env vars are missing, ask the user to run `agentexport setup-skills` to install the Claude hook, then restart Claude.
+If the env var is missing, ask the user to run `agentexport setup-skills` to install the Claude hook, then restart Claude Code.
 
 ## Managing Shares
 

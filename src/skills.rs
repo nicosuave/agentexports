@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::Tool;
 
-const CLAUDE_SKILL_SRC: &str = "skills/claude/agentexport/SKILL.md";
+const CLAUDE_COMMAND_SRC: &str = "commands/claude/agentexport.md";
 const CLAUDE_HOOK_SRC: &str = "skills/claude/hooks/agentexport";
 const CODEX_PROMPT_SRC: &str = "skills/codex/agentexport.md";
 const CLAUDE_HOOK_NAME: &str = "agentexport";
@@ -25,7 +25,7 @@ pub fn setup_skills_interactive() -> Result<()> {
     // Show what will be installed
     println!("This will install:");
     if claude_path.is_some() {
-        println!("  Claude Code: /agentexport skill + SessionStart hook");
+        println!("  Claude Code: /agentexport command + SessionStart hook");
     }
     if codex_path.is_some() {
         println!("  Codex: /agentexport prompt");
@@ -64,7 +64,7 @@ pub fn setup_skills_interactive() -> Result<()> {
         let (tool, _) = &items[index];
         match tool {
             Tool::Claude => {
-                install_claude_skill()?;
+                install_claude_command()?;
                 install_claude_hook()?;
                 ensure_claude_sessionstart_config()?;
             }
@@ -80,23 +80,23 @@ pub fn setup_skills_interactive() -> Result<()> {
     Ok(())
 }
 
-fn install_claude_skill() -> Result<()> {
-    let source = repo_path(CLAUDE_SKILL_SRC)?;
+fn install_claude_command() -> Result<()> {
+    let source = repo_path(CLAUDE_COMMAND_SRC)?;
     if !source.exists() {
-        bail!("missing {CLAUDE_SKILL_SRC} in repo");
+        bail!("missing {CLAUDE_COMMAND_SRC} in repo");
     }
-    let dest_dir = ensure_claude_skills_dir()?.join("agentexport");
-    let dest = dest_dir.join("SKILL.md");
+    let dest_dir = ensure_claude_commands_dir()?;
+    let dest = dest_dir.join("agentexport.md");
     if dest.exists() {
         println!(
-            "Skipping Claude skill (already installed at {}).",
+            "Skipping Claude command (already installed at {}).",
             dest.display()
         );
         return Ok(());
     }
     fs::create_dir_all(&dest_dir)?;
     fs::copy(&source, &dest)?;
-    println!("Installed Claude skill to {}.", dest.display());
+    println!("Installed Claude command to {}.", dest.display());
     Ok(())
 }
 
@@ -224,8 +224,8 @@ fn repo_path(relative: &str) -> Result<PathBuf> {
     Ok(root.join(relative))
 }
 
-fn ensure_claude_skills_dir() -> Result<PathBuf> {
-    let dir = claude_home_dir()?.join("skills");
+fn ensure_claude_commands_dir() -> Result<PathBuf> {
+    let dir = claude_home_dir()?.join("commands");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -289,8 +289,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(tmp.path()).unwrap();
-        let path = repo_path("skills/claude/agentexport/SKILL.md").unwrap();
-        assert!(path.ends_with("skills/claude/agentexport/SKILL.md"));
+        let path = repo_path("commands/claude/agentexport.md").unwrap();
+        assert!(path.ends_with("commands/claude/agentexport.md"));
         std::env::set_current_dir(cwd).unwrap();
     }
 }
