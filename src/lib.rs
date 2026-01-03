@@ -940,11 +940,14 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
             continue;
         }
 
-        // Skip internal events
+        // Skip internal events (but process event_msg in Codex mode for token usage)
         if matches!(
             event_type,
-            "file-history-snapshot" | "event_msg" | "summary" | "queue-operation"
+            "file-history-snapshot" | "summary" | "queue-operation"
         ) {
+            continue;
+        }
+        if event_type == "event_msg" && !codex_mode {
             continue;
         }
 
@@ -954,6 +957,26 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
             if event_type == "turn_context" {
                 if let Some(model) = value.pointer("/payload/model").and_then(|v| v.as_str()) {
                     current_model = Some(model.to_string());
+                }
+                continue;
+            }
+
+            // Extract token usage from event_msg (don't create a message, just accumulate)
+            if event_type == "event_msg" {
+                if let Some(payload_type) = value.pointer("/payload/type").and_then(|v| v.as_str()) {
+                    if payload_type == "token_count" {
+                        if let Some(usage) = value.pointer("/payload/info/total_token_usage") {
+                            if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                                result.total_input_tokens = input; // total, not incremental
+                            }
+                            if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                                result.total_output_tokens = output;
+                            }
+                            if let Some(cached) = usage.get("cached_input_tokens").and_then(|v| v.as_u64()) {
+                                result.total_cache_read_tokens = cached;
+                            }
+                        }
+                    }
                 }
                 continue;
             }
@@ -969,6 +992,23 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                         .and_then(|v| v.as_str())
                         .map(normalize_role)
                         .unwrap_or_else(|| "assistant".to_string());
+
+                    // Check for images in content array
+                    if let Some(content_arr) = payload.get("content").and_then(|v| v.as_array()) {
+                        for block in content_arr {
+                            if block.get("type").and_then(|t| t.as_str()) == Some("input_image") {
+                                result.messages.push(RenderedMessage {
+                                    role: role.clone(),
+                                    content: "[Image]".to_string(),
+                                    raw: None,
+                                    raw_label: None,
+                                    tool_use_id: None,
+                                    model: current_model.clone(),
+                                });
+                            }
+                        }
+                    }
+
                     let content = extract_content(payload).unwrap_or_default();
                     if !content.trim().is_empty() && !looks_like_internal_block(&content) {
                         let model = current_model.clone();
@@ -2021,5 +2061,42 @@ mod tests {
         let payload = create_share_payload(Tool::Claude, &path, None, None).unwrap();
         assert_eq!(payload.total_input_tokens, 1000);
         assert_eq!(payload.total_output_tokens, 500);
+    }
+
+    #[test]
+    fn parse_codex_token_usage() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let data = concat!(
+            r#"{"type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":500}}}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2500,"cached_input_tokens":800,"output_tokens":1200}}}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        // Should have final totals (not cumulative since Codex reports totals)
+        assert_eq!(result.total_input_tokens, 2500);
+        assert_eq!(result.total_output_tokens, 1200);
+        assert_eq!(result.total_cache_read_tokens, 800);
+    }
+
+    #[test]
+    fn parse_codex_image_placeholder() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let data = concat!(
+            r#"{"type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,abc"},{"type":"input_text","text":"What is this?"}]}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].content, "[Image]");
+        assert_eq!(result.messages[1].content, "What is this?");
     }
 }
