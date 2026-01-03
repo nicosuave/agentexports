@@ -952,8 +952,27 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
         if codex_mode {
             // Track model from turn_context
             if event_type == "turn_context" {
-                if let Some(model) = value.pointer("/model").and_then(|v| v.as_str()) {
+                if let Some(model) = value.pointer("/payload/model").and_then(|v| v.as_str()) {
                     current_model = Some(model.to_string());
+                }
+                continue;
+            }
+
+            // Extract token usage from event_msg with token_count
+            if event_type == "event_msg" {
+                if value.pointer("/payload/type").and_then(|v| v.as_str()) == Some("token_count") {
+                    if let Some(usage) = value.pointer("/payload/info/total_token_usage") {
+                        // Codex reports cumulative totals, so we just take the latest
+                        if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                            result.total_input_tokens = input;
+                        }
+                        if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                            result.total_output_tokens = output;
+                        }
+                        if let Some(cached) = usage.get("cached_input_tokens").and_then(|v| v.as_u64()) {
+                            result.total_cache_read_tokens = cached;
+                        }
+                    }
                 }
                 continue;
             }
