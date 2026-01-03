@@ -255,14 +255,28 @@ fn run_update(skip_confirm: bool) -> Result<()> {
     let tmp_dir = tempfile::tempdir()?;
     let archive_path = tmp_dir.path().join("agentexport.tar.gz");
 
-    // Download using curl
-    let status = std::process::Command::new("curl")
-        .args(["-fsSL", "-o"])
-        .arg(&archive_path)
-        .arg(&url)
-        .status()?;
-    if !status.success() {
-        return Err(anyhow::anyhow!("Failed to download release"));
+    // Download using curl with retries (assets may not be immediately available after release)
+    let mut last_status = None;
+    for attempt in 1..=3 {
+        let status = std::process::Command::new("curl")
+            .args(["-fsSL", "-o"])
+            .arg(&archive_path)
+            .arg(&url)
+            .status()?;
+        if status.success() {
+            last_status = Some(status);
+            break;
+        }
+        last_status = Some(status);
+        if attempt < 3 {
+            println!("Download failed, retrying in {} seconds...", attempt * 2);
+            std::thread::sleep(std::time::Duration::from_secs(attempt as u64 * 2));
+        }
+    }
+    if !last_status.map(|s| s.success()).unwrap_or(false) {
+        return Err(anyhow::anyhow!(
+            "Failed to download release (assets may still be uploading, try again in a minute)"
+        ));
     }
 
     // Extract
@@ -307,7 +321,10 @@ fn run_update(skip_confirm: bool) -> Result<()> {
 
 fn fetch_latest_version() -> Result<String> {
     let output = std::process::Command::new("curl")
-        .args(["-fsSL", &format!("https://api.github.com/repos/{REPO}/releases/latest")])
+        .args([
+            "-fsSL",
+            &format!("https://api.github.com/repos/{REPO}/releases/latest"),
+        ])
         .output()?;
 
     if !output.status.success() {

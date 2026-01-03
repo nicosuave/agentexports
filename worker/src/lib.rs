@@ -544,7 +544,6 @@ fn viewer_html(blob_id: &str) -> String {
                             span #shared-at class="date" {}
                         }
                         div class="meta-row" {
-                            span #session-id class="session" {}
                             div class="toggles" {
                                 label {
                                     input #show-thinking type="checkbox" checked;
@@ -554,9 +553,9 @@ fn viewer_html(blob_id: &str) -> String {
                                     input #show-details type="checkbox";
                                     " Show tool calls"
                                 }
+                                span #token-summary class="token-summary" {}
                             }
                         }
-                        div #token-summary class="token-summary" {}
                     }
                     section #messages class="messages hide-details" {}
                     footer {
@@ -607,12 +606,14 @@ header { margin-bottom: 32px; }
 h1 { font-size: 18px; font-weight: 600; }
 .model { font-size: 13px; color: #666; font-family: ui-monospace, monospace; }
 .date { font-size: 13px; color: #666; }
-.meta-row { display: flex; justify-content: space-between; align-items: center; }
-.session { font-family: ui-monospace, monospace; font-size: 12px; color: #999; }
-.toggles { font-size: 13px; color: #666; display: flex; gap: 16px; }
+.meta-row { display: flex; align-items: center; }
+.toggles { font-size: 13px; color: #666; display: flex; gap: 16px; align-items: center; }
 .toggles label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
-.token-summary { font-size: 13px; color: #666; margin-top: 8px; font-family: ui-monospace, monospace; }
+.token-summary { font-family: ui-monospace, monospace; border-left: 1px solid #ddd; padding-left: 16px; margin-left: 16px; }
 .token-summary:empty { display: none; }
+.command { display: flex; align-items: center; gap: 8px; }
+.command-label { font-size: 11px; text-transform: uppercase; color: #999; font-weight: 500; }
+.command-name { font-family: ui-monospace, monospace; font-size: 14px; color: #0066cc; }
 .messages { margin-top: 24px; }
 .msg { padding: 16px 0; }
 .msg-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
@@ -734,10 +735,19 @@ function escapeHtml(str) {{
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }}
 
+// Parse command messages like <command-message>x</command-message><command-name>/x</command-name>
+function parseCommand(text) {{
+    const msgMatch = text.match(/<command-message>([^<]*)<\/command-message>/);
+    const nameMatch = text.match(/<command-name>([^<]*)<\/command-name>/);
+    if (nameMatch) {{
+        return {{ name: nameMatch[1], message: msgMatch ? msgMatch[1] : null }};
+    }}
+    return null;
+}}
+
 function render(data) {{
     document.getElementById('tool-name').textContent = data.tool || 'Transcript';
     document.getElementById('shared-at').textContent = data.shared_at || '';
-    document.getElementById('session-id').textContent = data.session_id || '';
 
     // Model display
     const models = data.models || [];
@@ -775,10 +785,24 @@ function render(data) {{
 
         const content = document.createElement('div');
         content.className = 'msg-content';
-        if (msg.role === 'tool') {{
-            content.textContent = msg.content || '';
+        const msgContent = msg.content || '';
+
+        // Check if this is a command message
+        const cmd = msg.role === 'user' ? parseCommand(msgContent) : null;
+        if (cmd) {{
+            content.className = 'msg-content command';
+            const label = document.createElement('span');
+            label.className = 'command-label';
+            label.textContent = 'Command';
+            content.appendChild(label);
+            const name = document.createElement('span');
+            name.className = 'command-name';
+            name.textContent = cmd.name;
+            content.appendChild(name);
+        }} else if (msg.role === 'tool') {{
+            content.textContent = msgContent;
         }} else {{
-            content.innerHTML = md(msg.content || '');
+            content.innerHTML = md(msgContent);
         }}
         div.appendChild(content);
 

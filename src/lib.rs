@@ -15,8 +15,8 @@ use walkdir::WalkDir;
 
 pub mod config;
 mod crypto;
-pub mod shares;
 mod setup;
+pub mod shares;
 mod upload;
 
 pub use config::Config;
@@ -963,16 +963,22 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
 
             // Extract token usage from event_msg (don't create a message, just accumulate)
             if event_type == "event_msg" {
-                if let Some(payload_type) = value.pointer("/payload/type").and_then(|v| v.as_str()) {
+                if let Some(payload_type) = value.pointer("/payload/type").and_then(|v| v.as_str())
+                {
                     if payload_type == "token_count" {
                         if let Some(usage) = value.pointer("/payload/info/total_token_usage") {
-                            if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                            if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64())
+                            {
                                 result.total_input_tokens = input; // total, not incremental
                             }
-                            if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                            if let Some(output) =
+                                usage.get("output_tokens").and_then(|v| v.as_u64())
+                            {
                                 result.total_output_tokens = output;
                             }
-                            if let Some(cached) = usage.get("cached_input_tokens").and_then(|v| v.as_u64()) {
+                            if let Some(cached) =
+                                usage.get("cached_input_tokens").and_then(|v| v.as_u64())
+                            {
                                 result.total_cache_read_tokens = cached;
                             }
                         }
@@ -1074,8 +1080,11 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                         let summary_text: Vec<String> = summary_arr
                             .iter()
                             .filter_map(|item| {
-                                if item.get("type").and_then(|t| t.as_str()) == Some("summary_text") {
-                                    item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                                if item.get("type").and_then(|t| t.as_str()) == Some("summary_text")
+                                {
+                                    item.get("text")
+                                        .and_then(|t| t.as_str())
+                                        .map(|s| s.to_string())
                                 } else {
                                     None
                                 }
@@ -1164,10 +1173,16 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                     if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
                         result.total_output_tokens += output;
                     }
-                    if let Some(cache_read) = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()) {
+                    if let Some(cache_read) = usage
+                        .get("cache_read_input_tokens")
+                        .and_then(|v| v.as_u64())
+                    {
                         result.total_cache_read_tokens += cache_read;
                     }
-                    if let Some(cache_create) = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()) {
+                    if let Some(cache_create) = usage
+                        .get("cache_creation_input_tokens")
+                        .and_then(|v| v.as_u64())
+                    {
                         result.total_cache_creation_tokens += cache_create;
                     }
                 }
@@ -1240,7 +1255,9 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                                 });
                             }
                             "thinking" => {
-                                if let Some(thinking_text) = block.get("thinking").and_then(|v| v.as_str()) {
+                                if let Some(thinking_text) =
+                                    block.get("thinking").and_then(|v| v.as_str())
+                                {
                                     if !thinking_text.trim().is_empty() {
                                         result.messages.push(RenderedMessage {
                                             role: "thinking".to_string(),
