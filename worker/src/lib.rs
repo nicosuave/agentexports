@@ -544,7 +544,10 @@ fn viewer_html(blob_id: &str) -> String {
                             span #shared-at class="date" {}
                         }
                         div class="meta-row" {
-                            span #token-summary class="token-summary" {}
+                            div class="token-col" {
+                                span #token-summary class="token-summary" {}
+                                span #token-summary-2 class="token-summary" {}
+                            }
                             div class="toggles" {
                                 label {
                                     input #show-thinking type="checkbox" checked;
@@ -606,8 +609,9 @@ header { margin-bottom: 32px; }
 h1 { font-size: 18px; font-weight: 600; }
 .model { font-size: 13px; color: #666; font-family: ui-monospace, monospace; }
 .date { font-size: 13px; color: #666; }
-.meta-row { display: flex; justify-content: space-between; align-items: center; }
-.toggles { font-size: 13px; color: #666; display: flex; gap: 16px; }
+.meta-row { display: flex; justify-content: space-between; align-items: flex-start; margin-top: 8px; }
+.token-col { display: flex; flex-direction: column; gap: 2px; }
+.toggles { font-size: 13px; color: #666; display: flex; flex-direction: column; gap: 4px; white-space: nowrap; flex-shrink: 0; }
 .toggles label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
 .token-summary { font-size: 13px; color: #666; font-family: ui-monospace, monospace; }
 .token-summary:empty { display: none; }
@@ -838,16 +842,18 @@ function render(data) {{
 
     if (input > 0 || output > 0) {{
         const formatNum = n => n >= 1000 ? (n / 1000).toFixed(1) + 'K' : n.toString();
-        const parts = [formatNum(input) + ' input'];
-        if (cacheRead > 0) parts.push(formatNum(cacheRead) + ' cached');
-        parts.push(formatNum(output) + ' output');
+        const row1 = [formatNum(input) + ' in'];
+        if (cacheRead > 0) row1.push(formatNum(cacheRead) + ' cache r');
+        if (cacheCreate > 0) row1.push(formatNum(cacheCreate) + ' cache w');
+        tokenEl.textContent = row1.join(' · ');
 
+        const row2 = [formatNum(output) + ' out'];
         const model = (data.models && data.models[0]) || '';
         const cost = calculateCost(model, input, output, cacheRead, cacheCreate);
         if (cost !== null) {{
-            parts.push('$' + (cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)));
+            row2.push('$' + (cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)));
         }}
-        tokenEl.textContent = parts.join(' · ');
+        document.getElementById('token-summary-2').textContent = row2.join(' · ');
     }}
 }}
 
