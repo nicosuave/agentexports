@@ -1,10 +1,6 @@
-[workspace]
-members = [".", "worker"]
-resolver = "2"
-
 [package]
 name = "agentexport"
-version = "0.1.1"
+version = "0.1.5"
 edition = "2024"
 
 [dependencies]
