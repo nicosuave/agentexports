@@ -1028,6 +1028,30 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                         tool_use_id: call_id,
                         model: None,
                     });
+                } else if payload_type == "reasoning" {
+                    // Codex reasoning/thinking - extract summary text (full content is encrypted)
+                    if let Some(summary_arr) = payload.get("summary").and_then(|v| v.as_array()) {
+                        let summary_text: Vec<String> = summary_arr
+                            .iter()
+                            .filter_map(|item| {
+                                if item.get("type").and_then(|t| t.as_str()) == Some("summary_text") {
+                                    item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if !summary_text.is_empty() {
+                            result.messages.push(RenderedMessage {
+                                role: "thinking".to_string(),
+                                content: summary_text.join("\n"),
+                                raw: None,
+                                raw_label: None,
+                                tool_use_id: None,
+                                model: current_model.clone(),
+                            });
+                        }
+                    }
                 } else if is_tool_payload(payload) {
                     let content = tool_summary(payload);
                     let raw = serde_json::to_string_pretty(payload)
