@@ -1,6 +1,8 @@
 /target
 .claude/
 .codex/
+node_modules/
+bun.lock
 
 # Prevent accidental commit of transcript previews
 preview*.html
