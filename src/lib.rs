@@ -922,7 +922,10 @@ impl ParseResult {
         if self.codex_total_input_tokens > 0 {
             self.codex_total_input_tokens
         } else {
-            self.usage_by_message_id.values().map(|u| u.input_tokens).sum()
+            self.usage_by_message_id
+                .values()
+                .map(|u| u.input_tokens)
+                .sum()
         }
     }
 
@@ -931,7 +934,10 @@ impl ParseResult {
         if self.codex_total_output_tokens > 0 {
             self.codex_total_output_tokens
         } else {
-            self.usage_by_message_id.values().map(|u| u.output_tokens).sum()
+            self.usage_by_message_id
+                .values()
+                .map(|u| u.output_tokens)
+                .sum()
         }
     }
 
@@ -940,13 +946,19 @@ impl ParseResult {
         if self.codex_total_cache_read_tokens > 0 {
             self.codex_total_cache_read_tokens
         } else {
-            self.usage_by_message_id.values().map(|u| u.cache_read_tokens).sum()
+            self.usage_by_message_id
+                .values()
+                .map(|u| u.cache_read_tokens)
+                .sum()
         }
     }
 
     /// Compute total cache creation tokens
     fn total_cache_creation_tokens(&self) -> u64 {
-        self.usage_by_message_id.values().map(|u| u.cache_creation_tokens).sum()
+        self.usage_by_message_id
+            .values()
+            .map(|u| u.cache_creation_tokens)
+            .sum()
     }
 }
 
@@ -1216,8 +1228,14 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                         .unwrap_or("")
                         .to_string();
 
-                    let input = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let output = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let input = usage
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let output = usage
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     let cache_read = usage
                         .get("cache_read_input_tokens")
                         .and_then(|v| v.as_u64())
