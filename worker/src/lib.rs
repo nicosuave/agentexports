@@ -97,6 +97,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     router
         .get_async("/", handle_homepage)
+        .get_async("/api/metrics", handle_metrics)
         .get("/setup", |_, _| {
             let mut response = Response::ok(setup_script())?;
             response.headers_mut().set("Content-Type", "text/plain")?;
@@ -367,15 +368,27 @@ async fn handle_cors_preflight(_req: Request, _ctx: RouteContext<()>) -> Result<
     Ok(response)
 }
 
-async fn handle_homepage(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    // Try to fetch R2 metrics if secrets are configured
+async fn handle_homepage(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    Response::from_html(homepage_html())
+}
+
+async fn handle_metrics(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let metrics_json = match (ctx.secret("CLOUDFLARE_API_TOKEN"), ctx.secret("R2_ACCOUNT_ID")) {
         (Ok(api_token), Ok(account_id)) => {
             fetch_r2_metrics(&api_token.to_string(), &account_id.to_string()).await
         }
         _ => None,
     };
-    Response::from_html(homepage_html(metrics_json))
+
+    match metrics_json {
+        Some(json) => {
+            let mut response = Response::ok(json)?;
+            response.headers_mut().set("Content-Type", "application/json")?;
+            response.headers_mut().set("Cache-Control", "public, max-age=300")?; // 5 min cache
+            Ok(response)
+        }
+        None => Response::error("Metrics not configured", 404),
+    }
 }
 
 async fn fetch_r2_metrics(api_token: &str, account_id: &str) -> Option<String> {
@@ -463,34 +476,35 @@ async fn fetch_r2_metrics(api_token: &str, account_id: &str) -> Option<String> {
     serde_json::to_string(&data).ok()
 }
 
-fn homepage_html(metrics_json: Option<String>) -> String {
-    let (metrics_section, metrics_css) = if let Some(json) = metrics_json {
-        let section = format!(r##"
+fn homepage_html() -> String {
+    let metrics_section = r##"
     <h2>Stats</h2>
-    <div id="metrics-container" class="metrics-container"></div>
+    <div id="metrics-container" class="metrics-container"><span class="metrics-loading">Loading...</span></div>
     <script>
-    (function() {{
-        const points = {json};
+    (function() {
+        fetch('/api/metrics')
+            .then(r => r.ok ? r.json() : Promise.reject())
+            .then(renderMetrics)
+            .catch(() => {
+                document.getElementById('metrics-container').innerHTML = '';
+            });
+
+        function renderMetrics(points) {
         const container = document.getElementById('metrics-container');
-        if (!points || points.length === 0) return;
+        if (!points || points.length === 0) { container.innerHTML = ''; return; }
 
         const latest = points[points.length - 1];
-        const formatBytes = b => {{
+        const formatBytes = b => {
             if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
             if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
             if (b >= 1e3) return (b / 1e3).toFixed(1) + ' KB';
             return b + ' B';
-        }};
+        };
         const formatNum = n => n.toLocaleString();
-        const formatDate = d => {{
+        const formatDate = d => {
             const date = new Date(d);
-            return date.toLocaleDateString('en-US', {{ month: 'short', day: 'numeric' }});
-        }};
-
-        // Calculate actual day span from data
-        const firstDate = new Date(points[0].date);
-        const lastDate = new Date(points[points.length - 1].date);
-        const daySpan = Math.max(1, Math.round((lastDate - firstDate) / (1000 * 60 * 60 * 24)));
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        };
 
         container.innerHTML = `
             <div class="metrics-chart">
@@ -498,8 +512,8 @@ fn homepage_html(metrics_json: Option<String>) -> String {
                 <div class="metrics-tooltip" id="tooltip"></div>
             </div>
             <div class="metrics-axis">
-                <span>${{formatDate(points[0].date)}}</span>
-                <span>${{formatDate(points[points.length - 1].date)}}</span>
+                <span>${formatDate(points[0].date)}</span>
+                <span>${formatDate(points[points.length - 1].date)}</span>
             </div>
             <div class="metrics-legend">
                 <span><span class="legend-line objects"></span>shares</span>
@@ -511,52 +525,54 @@ fn homepage_html(metrics_json: Option<String>) -> String {
         const ctx = canvas.getContext('2d');
         const tooltip = document.getElementById('tooltip');
         const w = canvas.width, h = canvas.height;
-        const pad = {{ t: 8, r: 8, b: 8, l: 8 }};
+        const pad = { t: 8, r: 8, b: 8, l: 8 };
         const cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
 
-        function normalize(vals) {{
+        function normalize(vals) {
             const min = Math.min(...vals), max = Math.max(...vals);
             const range = max - min || 1;
             return vals.map(v => (v - min) / range);
-        }}
+        }
 
-        function drawLine(vals, color) {{
+        function drawLine(vals, color) {
             const norm = normalize(vals);
             ctx.strokeStyle = color;
             ctx.lineWidth = 1.5;
             ctx.beginPath();
-            norm.forEach((v, i) => {{
+            norm.forEach((v, i) => {
                 const x = pad.l + (i / (norm.length - 1)) * cw;
                 const y = pad.t + ch - v * ch;
                 i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-            }});
+            });
             ctx.stroke();
-        }}
+        }
 
         drawLine(points.map(p => p.objects), '#0066cc');
         drawLine(points.map(p => p.storage_bytes), '#888');
 
         // Hover tooltip
-        canvas.addEventListener('mousemove', e => {{
+        canvas.addEventListener('mousemove', e => {
             const rect = canvas.getBoundingClientRect();
             const scaleX = canvas.width / rect.width;
             const x = (e.clientX - rect.left) * scaleX;
             const idx = Math.round(((x - pad.l) / cw) * (points.length - 1));
-            if (idx >= 0 && idx < points.length) {{
+            if (idx >= 0 && idx < points.length) {
                 const p = points[idx];
-                tooltip.innerHTML = `${{formatNum(p.objects)}} shares · ${{formatBytes(p.storage_bytes)}}`;
+                tooltip.innerHTML = `${formatNum(p.objects)} shares · ${formatBytes(p.storage_bytes)}`;
                 tooltip.style.opacity = '1';
                 tooltip.style.left = ((x / canvas.width) * 100) + '%';
-            }}
-        }});
-        canvas.addEventListener('mouseleave', () => {{
+            }
+        });
+        canvas.addEventListener('mouseleave', () => {
             tooltip.style.opacity = '0';
-        }});
-    }})();
+        });
+        }
+    })();
     </script>
-"##, json = json);
-        let css = r##"
+"##;
+    let metrics_css = r##"
         .metrics-container { margin: 0.5rem 0; position: relative; }
+        .metrics-loading { font-size: 13px; color: #999; }
         .metrics-chart { border-radius: 4px; padding: 8px 0; position: relative; }
         .metrics-chart canvas { display: block; width: 100%; height: auto; }
         .metrics-tooltip { position: absolute; top: -24px; transform: translateX(-50%); background: #333; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
@@ -565,11 +581,7 @@ fn homepage_html(metrics_json: Option<String>) -> String {
         .legend-line { display: inline-block; width: 12px; height: 2px; margin-right: 6px; vertical-align: middle; }
         .legend-line.objects { background: #0066cc; }
         .legend-line.storage { background: #888; }
-"##.to_string();
-        (section, css)
-    } else {
-        (String::new(), String::new())
-    };
+"##;
 
     format!(r##"<!DOCTYPE html>
 <html lang="en">
