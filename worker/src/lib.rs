@@ -391,7 +391,7 @@ fn homepage_html() -> String {
 <body>
     <header>
         <h1>agentexport</h1>
-        <a href="/v/n81081706f7d93697#OB6XCZWc1NWEoSUUuQurzTTjwS7-6McLBbU2KvaACC8">Demo</a>
+        <a href="/v/nbc6b43907ec5c0f3#EzyQxZQA3hJnwoO7rzJYym0kjIArv4DuPh2asptdEPM">Demo</a>
         <a href="https://github.com/nicosuave/agentexport">GitHub</a>
     </header>
     <p class="tagline">Share Claude Code and Codex transcripts. No signup required.</p>
