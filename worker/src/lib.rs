@@ -707,7 +707,7 @@ function md(text) {{
 
     // Paragraphs
     text = text.split(/\n\n+/).map(p => {{
-        if (p.startsWith('<h') || p.startsWith('<pre') || p.startsWith('<ul') || p.startsWith('%%')) return p;
+        if (p.startsWith('<h') || p.startsWith('<pre') || p.startsWith('<ul') || p.startsWith('%%') || p.includes('<li>')) return p;
         return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
     }}).join('');
 
