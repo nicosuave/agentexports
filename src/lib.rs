@@ -16,11 +16,11 @@ use walkdir::WalkDir;
 pub mod config;
 mod crypto;
 pub mod shares;
-mod skills;
+mod setup;
 mod upload;
 
 pub use config::Config;
-pub use skills::setup_skills_interactive;
+pub use setup::run as run_setup;
 
 const APP_NAME: &str = "agentexport";
 

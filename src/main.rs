@@ -3,9 +3,7 @@ use clap::{Parser, Subcommand};
 use std::io::Read;
 use std::path::PathBuf;
 
-use agentexport::{
-    Config, PublishOptions, Tool, handle_claude_sessionstart, publish, setup_skills_interactive,
-};
+use agentexport::{Config, PublishOptions, Tool, handle_claude_sessionstart, publish, run_setup};
 
 mod shares_cmd;
 
@@ -152,7 +150,7 @@ fn run() -> Result<()> {
             }
         }
         Commands::Setup => {
-            setup_skills_interactive()?;
+            run_setup()?;
         }
         Commands::Shares { action } => {
             shares_cmd::run(action)?;

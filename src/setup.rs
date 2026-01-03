@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail, Context};
 use dialoguer::{MultiSelect, theme::ColorfulTheme};
 use serde_json::{Map, Value, json};
 use std::fs;
@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 
 use crate::Tool;
 
-const CLAUDE_COMMAND_SRC: &str = "commands/claude/agentexport.md";
-const CLAUDE_HOOK_SRC: &str = "skills/claude/hooks/agentexport";
-const CODEX_PROMPT_SRC: &str = "skills/codex/agentexport.md";
+// Embed files at compile time
+const CLAUDE_COMMAND: &str = include_str!("../commands/claude/agentexport.md");
+const CLAUDE_HOOK: &str = include_str!("../skills/claude/hooks/agentexport");
+const CODEX_PROMPT: &str = include_str!("../skills/codex/agentexport.md");
 const CLAUDE_HOOK_NAME: &str = "agentexport";
 
-pub fn setup_skills_interactive() -> Result<()> {
+pub fn run() -> Result<()> {
     let theme = ColorfulTheme::default();
 
     // Detect installed tools
@@ -81,10 +82,6 @@ pub fn setup_skills_interactive() -> Result<()> {
 }
 
 fn install_claude_command() -> Result<()> {
-    let source = repo_path(CLAUDE_COMMAND_SRC)?;
-    if !source.exists() {
-        bail!("missing {CLAUDE_COMMAND_SRC} in repo");
-    }
     let dest_dir = ensure_claude_commands_dir()?;
     let dest = dest_dir.join("agentexport.md");
     if dest.exists() {
@@ -95,16 +92,12 @@ fn install_claude_command() -> Result<()> {
         return Ok(());
     }
     fs::create_dir_all(&dest_dir)?;
-    fs::copy(&source, &dest)?;
+    fs::write(&dest, CLAUDE_COMMAND)?;
     println!("Installed Claude command to {}.", dest.display());
     Ok(())
 }
 
 fn install_codex_prompt() -> Result<()> {
-    let source = repo_path(CODEX_PROMPT_SRC)?;
-    if !source.exists() {
-        bail!("missing {CODEX_PROMPT_SRC} in repo");
-    }
     let dest_dir = ensure_codex_prompts_dir()?;
     let dest = dest_dir.join("agentexport.md");
     if dest.exists() {
@@ -115,16 +108,12 @@ fn install_codex_prompt() -> Result<()> {
         return Ok(());
     }
     fs::create_dir_all(&dest_dir)?;
-    fs::copy(&source, &dest)?;
+    fs::write(&dest, CODEX_PROMPT)?;
     println!("Installed Codex prompt to {}.", dest.display());
     Ok(())
 }
 
 fn install_claude_hook() -> Result<()> {
-    let source = repo_path(CLAUDE_HOOK_SRC)?;
-    if !source.exists() {
-        bail!("missing {CLAUDE_HOOK_SRC} in repo");
-    }
     let hooks_dir = claude_home_dir()?.join("hooks");
     fs::create_dir_all(&hooks_dir)?;
     let dest = hooks_dir.join(CLAUDE_HOOK_NAME);
@@ -135,7 +124,7 @@ fn install_claude_hook() -> Result<()> {
         );
         return Ok(());
     }
-    fs::copy(&source, &dest)?;
+    fs::write(&dest, CLAUDE_HOOK)?;
     set_executable(&dest)?;
     println!("Installed Claude hook to {}.", dest.display());
     Ok(())
@@ -219,11 +208,6 @@ fn find_or_create_session_entry(entries: &mut Vec<Value>) -> usize {
     entries.len() - 1
 }
 
-fn repo_path(relative: &str) -> Result<PathBuf> {
-    let root = std::env::current_dir().context("unable to resolve cwd")?;
-    Ok(root.join(relative))
-}
-
 fn ensure_claude_commands_dir() -> Result<PathBuf> {
     let dir = claude_home_dir()?.join("commands");
     fs::create_dir_all(&dir)?;
@@ -277,20 +261,4 @@ fn set_executable(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn set_executable(_path: &Path) -> Result<()> {
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn repo_path_joins_cwd() {
-        let tmp = TempDir::new().unwrap();
-        let cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        let path = repo_path("commands/claude/agentexport.md").unwrap();
-        assert!(path.ends_with("commands/claude/agentexport.md"));
-        std::env::set_current_dir(cwd).unwrap();
-    }
 }
