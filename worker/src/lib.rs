@@ -619,7 +619,8 @@ h1 { font-size: 18px; font-weight: 600; }
 .msg-content code { background: #f5f5f5; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
 .msg-content pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
 .msg-content pre code { background: none; padding: 0; }
-.msg-content ul, .msg-content ol { margin: 0.5em 0 0.5em 1.5em; }
+.msg-content ul, .msg-content ol { margin: 0.5em 0 0.5em 1.5em; padding: 0; }
+.msg-content li { margin: 0.25em 0; }
 .msg-content h1, .msg-content h2, .msg-content h3 { margin: 1em 0 0.5em; font-size: 1.1em; }
 .msg-content table { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
 .msg-content th, .msg-content td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
