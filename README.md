@@ -121,6 +121,14 @@ Then configure the CLI to use your domain:
 agentexport config set upload_url https://your-domain.com
 ```
 
+### Configuration
+
+Set environment variables in `wrangler.toml` under `[vars]`:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MAX_TTL_DAYS` | Maximum allowed retention period. Requests exceeding this are rejected. Set to `365` to disable "forever" retention. | unlimited |
+
 ## Development
 
 ### Prerequisites

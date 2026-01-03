@@ -144,6 +144,21 @@ async fn handle_upload(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
         .and_then(|s| s.parse().ok())
         .unwrap_or(30);
 
+    // Check against MAX_TTL_DAYS if configured
+    if let Ok(max_ttl) = ctx.env.var("MAX_TTL_DAYS") {
+        if let Ok(max_days) = max_ttl.to_string().parse::<u64>() {
+            // TTL > 365 means "forever", which exceeds any finite max
+            // TTL 0 also means forever in some contexts
+            let effective_ttl = if ttl_days > 365 { u64::MAX } else { ttl_days };
+            if effective_ttl > max_days {
+                return with_cors(Response::error(
+                    format!("TTL exceeds maximum allowed ({} days)", max_days),
+                    400,
+                )?);
+            }
+        }
+    }
+
     let body = req.bytes().await?;
     if body.len() > MAX_BLOB_SIZE {
         return with_cors(Response::error("Blob too large", 413)?);
@@ -417,7 +432,7 @@ fn homepage_html() -> String {
     <p>The decryption key lives in the URL fragment (<code>#key</code>) which browsers never send to servers. The server operator cannot read your transcripts. URLs without the correct key will fail to decrypt, showing only garbled data.</p>
 
     <h2>Expiration</h2>
-    <p>Shares auto-expire after 30 days by default. You can choose longer retention (60, 90, 180, 365 days) or keep shares forever using the <code>--ttl</code> flag.</p>
+    <p>Shares auto-expire after 30 days by default. Configure retention with <code>agentexport config set default_ttl 90</code> (supports 30, 60, 90, 180, 365 days).</p>
 
     <h2>Self-hosting</h2>
     <p>You can deploy your own instance using Cloudflare Workers and R2. See the <a href="https://github.com/nicosuave/agentexport#self-hosting">README</a> for instructions, then run <code>agentexport config set upload_url https://your-domain.com</code>.</p>
