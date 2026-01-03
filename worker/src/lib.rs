@@ -408,7 +408,7 @@ fn homepage_html() -> String {
     </script>
 
     <h2>Usage</h2>
-    <p>Run <code>agentexport setup-skills</code> to install the command, then type <code>/agentexport</code> in Claude Code or Codex.</p>
+    <p>Run <code>agentexport setup</code> to install the command, then type <code>/agentexport</code> in Claude Code or Codex.</p>
 
     <h2>How it works</h2>
     <p>Transcripts are compressed and encrypted locally with AES-256-GCM before upload. The server only stores opaque encrypted blobs. Decryption happens entirely in the recipient's browser.</p>
@@ -484,7 +484,7 @@ case ":$PATH:" in
 esac
 
 echo ""
-echo "Run 'agentexport setup-skills' to configure Claude Code or Codex"
+echo "Run 'agentexport setup' to configure Claude Code or Codex"
 "##.to_string()
 }
 

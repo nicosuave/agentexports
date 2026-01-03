@@ -48,8 +48,8 @@ enum Commands {
         #[arg(long)]
         ttl: Option<u64>,
     },
-    #[command(name = "setup-skills")]
-    SetupSkills,
+    #[command(name = "setup")]
+    Setup,
 
     /// Manage shared transcripts
     #[command(name = "shares")]
@@ -151,7 +151,7 @@ fn run() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         }
-        Commands::SetupSkills => {
+        Commands::Setup => {
             setup_skills_interactive()?;
         }
         Commands::Shares { action } => {

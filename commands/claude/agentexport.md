@@ -15,7 +15,7 @@ Use the environment variable set by the SessionStart hook:
 agentexport publish --tool claude --transcript "$AGENTEXPORT_CLAUDE_TRANSCRIPT_PATH" --render
 ```
 
-If the env var is missing, ask the user to run `agentexport setup-skills` to install the Claude hook, then restart Claude Code.
+If the env var is missing, ask the user to run `agentexport setup` to install the Claude hook, then restart Claude Code.
 
 ## Managing Shares
 
