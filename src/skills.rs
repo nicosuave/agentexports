@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use dialoguer::{Confirm, MultiSelect, theme::ColorfulTheme};
+use dialoguer::{MultiSelect, theme::ColorfulTheme};
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,69 +14,68 @@ const CLAUDE_HOOK_NAME: &str = "agentexport";
 pub fn setup_skills_interactive() -> Result<()> {
     let theme = ColorfulTheme::default();
 
-    let targets = [Tool::Claude, Tool::Codex];
-    let mut tool_choices = Vec::new();
-    let mut tool_items = Vec::new();
-    let mut tool_defaults = Vec::new();
-    for tool in targets {
-        let binary = find_in_path(tool_binary_name(tool));
-        let available = binary.is_some();
-        let label = match binary.as_deref().and_then(|path| path.to_str()) {
-            Some(path) => format!("{} (found at {})", tool_label(tool), path),
-            None => format!("{} (not found in PATH)", tool_label(tool)),
-        };
-        tool_choices.push((tool, available));
-        tool_items.push(label);
-        tool_defaults.push(available);
+    // Detect installed tools
+    let claude_path = find_in_path("claude");
+    let codex_path = find_in_path("codex");
+
+    if claude_path.is_none() && codex_path.is_none() {
+        bail!("Neither claude nor codex found in PATH");
     }
 
-    if tool_choices.iter().all(|(_, available)| !*available) {
-        bail!("neither claude nor codex binaries found in PATH");
+    // Show what will be installed
+    println!("This will install:");
+    if claude_path.is_some() {
+        println!("  Claude Code: /agentexport skill + SessionStart hook");
+    }
+    if codex_path.is_some() {
+        println!("  Codex: /agentexport prompt");
+    }
+    println!();
+
+    // Build selection list (only installed tools)
+    let mut items: Vec<(Tool, String)> = Vec::new();
+    let mut defaults = Vec::new();
+
+    if let Some(path) = &claude_path {
+        items.push((Tool::Claude, format!("Claude Code ({})", path.display())));
+        defaults.push(true);
+    }
+    if let Some(path) = &codex_path {
+        items.push((Tool::Codex, format!("Codex ({})", path.display())));
+        defaults.push(true);
     }
 
-    let proceed = Confirm::with_theme(&theme)
-        .with_prompt(
-            "This will install user skills/prompts from this binary. If Claude is selected, it will install ~/.claude/hooks/agentexport and update ~/.claude/settings.json to run it on SessionStart. Continue?",
-        )
-        .default(true)
-        .interact()?;
-    if !proceed {
-        bail!("aborted");
-    }
+    let labels: Vec<&str> = items.iter().map(|(_, label)| label.as_str()).collect();
 
     let selected = MultiSelect::with_theme(&theme)
-        .with_prompt("Select tools to set up user skills for")
-        .items(&tool_items)
-        .defaults(&tool_defaults)
+        .with_prompt("Select tools to configure")
+        .items(&labels)
+        .defaults(&defaults)
         .interact()?;
 
     if selected.is_empty() {
-        bail!("no tools selected");
+        println!("Nothing selected.");
+        return Ok(());
     }
 
-    for index in selected {
-        let (tool, available) = tool_choices[index];
-        if !available {
-            println!(
-                "Skipping {} because it is not available in PATH.",
-                tool_label(tool)
-            );
-            continue;
-        }
+    println!();
 
+    for index in selected {
+        let (tool, _) = &items[index];
         match tool {
             Tool::Claude => {
                 install_claude_skill()?;
                 install_claude_hook()?;
                 ensure_claude_sessionstart_config()?;
-                println!("Restart Claude to pick up new skills and hooks.");
             }
             Tool::Codex => {
                 install_codex_prompt()?;
-                println!("Restart Codex to pick up new prompts.");
             }
         }
     }
+
+    println!();
+    println!("Done! Restart Claude Code / Codex to pick up changes.");
 
     Ok(())
 }
@@ -240,20 +239,6 @@ fn ensure_codex_prompts_dir() -> Result<PathBuf> {
 fn claude_home_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME not set")?;
     Ok(PathBuf::from(home).join(".claude"))
-}
-
-fn tool_binary_name(tool: Tool) -> &'static str {
-    match tool {
-        Tool::Claude => "claude",
-        Tool::Codex => "codex",
-    }
-}
-
-fn tool_label(tool: Tool) -> &'static str {
-    match tool {
-        Tool::Claude => "Claude",
-        Tool::Codex => "Codex",
-    }
 }
 
 fn find_in_path(binary: &str) -> Option<PathBuf> {
