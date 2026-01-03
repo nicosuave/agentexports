@@ -851,35 +851,88 @@ function render(data) {{
     }}
 }}
 
-// Model pricing (per token)
-const PRICING = {{
-    'claude-opus-4-5': {{ input: 15e-6, output: 75e-6, cacheRead: 1.5e-6, cacheCreate: 18.75e-6 }},
-    'claude-sonnet-4-5': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6 }},
-    'claude-sonnet-4': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6 }},
-    'claude-haiku-4-5': {{ input: 0.8e-6, output: 4e-6, cacheRead: 0.08e-6, cacheCreate: 1e-6 }},
-    'gpt-5': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6, cacheCreate: 0 }},
-    'gpt-5.1': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6, cacheCreate: 0 }},
+// Claude pricing (input/cache/output are SEPARATE categories)
+const CLAUDE_PRICING = {{
+    'claude-opus-4-5-20251101': {{ input: 5e-6, output: 25e-6, cacheRead: 0.5e-6, cacheCreate: 6.25e-6 }},
+    'claude-opus-4-5': {{ input: 5e-6, output: 25e-6, cacheRead: 0.5e-6, cacheCreate: 6.25e-6 }},
+    'claude-opus-4-20250514': {{ input: 15e-6, output: 75e-6, cacheRead: 1.5e-6, cacheCreate: 18.75e-6 }},
+    'claude-opus-4-1': {{ input: 15e-6, output: 75e-6, cacheRead: 1.5e-6, cacheCreate: 18.75e-6 }},
+    'claude-sonnet-4-5-20250929': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6, threshold: 200000, inputAbove: 6e-6, outputAbove: 22.5e-6, cacheReadAbove: 0.6e-6, cacheCreateAbove: 7.5e-6 }},
+    'claude-sonnet-4-5': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6, threshold: 200000, inputAbove: 6e-6, outputAbove: 22.5e-6, cacheReadAbove: 0.6e-6, cacheCreateAbove: 7.5e-6 }},
+    'claude-sonnet-4-20250514': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6, threshold: 200000, inputAbove: 6e-6, outputAbove: 22.5e-6, cacheReadAbove: 0.6e-6, cacheCreateAbove: 7.5e-6 }},
+    'claude-haiku-4-5-20251001': {{ input: 1e-6, output: 5e-6, cacheRead: 0.1e-6, cacheCreate: 1.25e-6 }},
+    'claude-haiku-4-5': {{ input: 1e-6, output: 5e-6, cacheRead: 0.1e-6, cacheCreate: 1.25e-6 }},
 }};
 
-function normalizeModel(model) {{
+// Codex pricing (input INCLUDES cached, so we subtract)
+const CODEX_PRICING = {{
+    'gpt-5': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6 }},
+    'gpt-5-codex': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6 }},
+    'gpt-5.1': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6 }},
+    'gpt-5.2': {{ input: 1.75e-6, output: 14e-6, cacheRead: 0.175e-6 }},
+    'gpt-5.2-codex': {{ input: 1.75e-6, output: 14e-6, cacheRead: 0.175e-6 }},
+}};
+
+function normalizeClaudeModel(model) {{
     if (!model) return '';
-    let m = model.toLowerCase();
+    let m = model.toLowerCase().trim();
     m = m.replace(/^anthropic\./, '');
-    m = m.replace(/-\d{{8}}$/, ''); // strip date suffix like -20251101
-    m = m.replace(/-v\d+:\d+$/, ''); // strip version suffix
+    // Handle format like "something.claude-opus-4-5"
+    const lastDot = m.lastIndexOf('.');
+    if (lastDot !== -1 && m.includes('claude-')) {{
+        const tail = m.slice(lastDot + 1);
+        if (tail.startsWith('claude-')) m = tail;
+    }}
+    m = m.replace(/-v\d+:\d+$/, ''); // strip -v1:0 suffix
+    // Try with date suffix first, then without
+    if (CLAUDE_PRICING[m]) return m;
+    const noDate = m.replace(/-\d{{8}}$/, '');
+    if (CLAUDE_PRICING[noDate]) return noDate;
     return m;
 }}
 
-function calculateCost(model, input, output, cacheRead, cacheCreate) {{
-    const normalized = normalizeModel(model);
-    const pricing = PRICING[normalized];
-    if (!pricing) return null;
+function normalizeCodexModel(model) {{
+    if (!model) return '';
+    let m = model.toLowerCase().trim();
+    m = m.replace(/^openai\//, '');
+    // Try stripping -codex suffix for lookup
+    const noCodex = m.replace(/-codex$/, '');
+    if (CODEX_PRICING[noCodex]) return noCodex;
+    return m;
+}}
 
-    const uncachedInput = Math.max(0, input - cacheRead);
-    return (uncachedInput * pricing.input)
-         + (output * pricing.output)
-         + (cacheRead * pricing.cacheRead)
-         + (cacheCreate * (pricing.cacheCreate || 0));
+function tieredCost(tokens, base, above, threshold) {{
+    if (!threshold || !above) return tokens * base;
+    const below = Math.min(tokens, threshold);
+    const over = Math.max(0, tokens - threshold);
+    return below * base + over * above;
+}}
+
+function calculateCost(model, input, output, cacheRead, cacheCreate) {{
+    // Try Claude pricing first
+    const claudeKey = normalizeClaudeModel(model);
+    const claudePricing = CLAUDE_PRICING[claudeKey];
+    if (claudePricing) {{
+        // Claude: input_tokens is non-cached, all categories are additive
+        const p = claudePricing;
+        return tieredCost(input, p.input, p.inputAbove, p.threshold)
+             + tieredCost(cacheRead, p.cacheRead, p.cacheReadAbove, p.threshold)
+             + tieredCost(cacheCreate, p.cacheCreate, p.cacheCreateAbove, p.threshold)
+             + tieredCost(output, p.output, p.outputAbove, p.threshold);
+    }}
+
+    // Try Codex pricing
+    const codexKey = normalizeCodexModel(model);
+    const codexPricing = CODEX_PRICING[codexKey];
+    if (codexPricing) {{
+        // Codex: input_tokens includes cached, so subtract
+        const p = codexPricing;
+        const cached = Math.min(cacheRead, input);
+        const nonCached = Math.max(0, input - cached);
+        return nonCached * p.input + cached * p.cacheRead + output * p.output;
+    }}
+
+    return null;
 }}
 
 async function main() {{
