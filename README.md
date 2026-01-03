@@ -1,11 +1,11 @@
 # agentexport
 
-Share Claude Code and Codex session transcripts with zero-knowledge encryption.
+Share Claude Code and Codex session transcripts with end-to-end encryption.
 
 ## Features
 
-- **Zero-knowledge sharing**: Transcripts are encrypted client-side. The server only sees encrypted blobs.
-- **Privacy by design**: Decryption keys live only in URL fragments, never sent to servers.
+- **Private by default**: Your transcripts are encrypted before they leave your machine. The server never sees your content.
+- **Safe links**: The decryption key is part of the URL itself, so only people you share with can read it.
 - **Works with Claude Code and Codex**: Just run `/agentexport` in Claude or the publish command in Codex.
 
 ## Installation
