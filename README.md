@@ -2,7 +2,7 @@
 
 Share Claude Code and Codex session transcripts with end-to-end encryption.
 
-[Check out a demo](https://agentexports.com/v/n81081706f7d93697#OB6XCZWc1NWEoSUUuQurzTTjwS7-6McLBbU2KvaACC8)
+[Check out a demo](https://agentexports.com/v/nbc6b43907ec5c0f3#EzyQxZQA3hJnwoO7rzJYym0kjIArv4DuPh2asptdEPM)
 
 ## Features
 
