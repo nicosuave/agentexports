@@ -958,25 +958,6 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                 continue;
             }
 
-            // Extract token usage from event_msg with token_count
-            if event_type == "event_msg" {
-                if value.pointer("/payload/type").and_then(|v| v.as_str()) == Some("token_count") {
-                    if let Some(usage) = value.pointer("/payload/info/total_token_usage") {
-                        // Codex reports cumulative totals, so we just take the latest
-                        if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
-                            result.total_input_tokens = input;
-                        }
-                        if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
-                            result.total_output_tokens = output;
-                        }
-                        if let Some(cached) = usage.get("cached_input_tokens").and_then(|v| v.as_u64()) {
-                            result.total_cache_read_tokens = cached;
-                        }
-                    }
-                }
-                continue;
-            }
-
             if event_type != "response_item" {
                 continue;
             }
@@ -1945,5 +1926,100 @@ mod tests {
         assert_eq!(bytes, 2);
         let filename = transcript.file_name().and_then(|s| s.to_str()).unwrap();
         assert!(filename.contains("sess-123"));
+    }
+
+    #[test]
+    fn parse_claude_thinking_blocks() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        let data = r#"{"type":"assistant","message":{"model":"claude-sonnet-4","content":[{"type":"thinking","thinking":"Let me analyze this..."},{"type":"text","text":"Here is my answer"}]}}"#;
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].role, "thinking");
+        assert_eq!(result.messages[0].content, "Let me analyze this...");
+        assert_eq!(result.messages[1].role, "assistant");
+        assert_eq!(result.messages[1].content, "Here is my answer");
+    }
+
+    #[test]
+    fn parse_claude_image_placeholder() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        let data = r#"{"type":"assistant","message":{"model":"claude-sonnet-4","content":[{"type":"image","source":{"type":"base64","data":"abc123"}},{"type":"text","text":"As shown above"}]}}"#;
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].role, "assistant");
+        assert_eq!(result.messages[0].content, "[Image]");
+        assert_eq!(result.messages[1].content, "As shown above");
+    }
+
+    #[test]
+    fn parse_claude_token_usage() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        let data = concat!(
+            r#"{"type":"assistant","message":{"model":"claude-sonnet-4","usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":800,"cache_creation_input_tokens":200},"content":[{"type":"text","text":"Hello"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"model":"claude-sonnet-4","usage":{"input_tokens":1500,"output_tokens":300,"cache_read_input_tokens":1200,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"World"}]}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.total_input_tokens, 2500);
+        assert_eq!(result.total_output_tokens, 800);
+        assert_eq!(result.total_cache_read_tokens, 2000);
+        assert_eq!(result.total_cache_creation_tokens, 200);
+    }
+
+    #[test]
+    fn parse_codex_reasoning_summary() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let data = concat!(
+            r#"{"type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"**Analyzing the code**"}],"encrypted_content":"abc123"}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].role, "thinking");
+        assert_eq!(result.messages[0].content, "**Analyzing the code**");
+    }
+
+    #[test]
+    fn parse_codex_model_from_turn_context() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let data = concat!(
+            r#"{"type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#,
+            "\n",
+            r#"{"type":"turn_context","payload":{"model":"gpt-5","cwd":"/test"}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].model, Some("gpt-5".to_string()));
+        assert!(result.model_counts.contains_key("gpt-5"));
+    }
+
+    #[test]
+    fn share_payload_includes_token_usage() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        let data = r#"{"type":"assistant","message":{"model":"claude-sonnet-4","usage":{"input_tokens":1000,"output_tokens":500},"content":[{"type":"text","text":"Hello"}]}}"#;
+        fs::write(&path, data).unwrap();
+
+        let payload = create_share_payload(Tool::Claude, &path, None, None).unwrap();
+        assert_eq!(payload.total_input_tokens, 1000);
+        assert_eq!(payload.total_output_tokens, 500);
     }
 }
