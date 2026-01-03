@@ -331,9 +331,9 @@ fn homepage_html() -> String {
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 600px;
-            margin: 4rem auto;
-            padding: 0 1rem;
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 48px 24px;
             line-height: 1.6;
         }
         header { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.25rem; }
@@ -631,8 +631,8 @@ h1 { font-size: 18px; font-weight: 600; }
 .raw { margin-top: 8px; }
 .raw summary { font-size: 12px; color: #666; cursor: pointer; }
 .raw pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 8px; max-height: 300px; }
-footer { margin-top: 48px; font-size: 12px; color: #999; text-align: center; }
-footer a { color: #666; text-decoration: none; }
+footer { margin-top: 48px; font-size: 14px; color: #999; text-align: center; }
+footer a { color: #999; text-decoration: none; }
 footer a:hover { text-decoration: underline; }
 "#;
 
