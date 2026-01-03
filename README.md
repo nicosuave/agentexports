@@ -2,6 +2,8 @@
 
 Share Claude Code and Codex session transcripts with end-to-end encryption.
 
+[Check out a demo](https://agentexports.com/v/n81081706f7d93697#OB6XCZWc1NWEoSUUuQurzTTjwS7-6McLBbU2KvaACC8)
+
 ## Features
 
 - **Private by default**: Your transcripts are encrypted before they leave your machine. The server never sees your content.
