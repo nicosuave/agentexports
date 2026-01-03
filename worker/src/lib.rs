@@ -540,6 +540,7 @@ fn viewer_html(blob_id: &str) -> String {
                             div class="title-left" {
                                 h1 #tool-name { "Transcript" }
                                 span #model-info class="model" {}
+                                span #token-summary class="token-summary" {}
                             }
                             span #shared-at class="date" {}
                         }
@@ -553,7 +554,6 @@ fn viewer_html(blob_id: &str) -> String {
                                     input #show-details type="checkbox";
                                     " Show tool calls"
                                 }
-                                span #token-summary class="token-summary" {}
                             }
                         }
                     }
@@ -606,10 +606,10 @@ header { margin-bottom: 32px; }
 h1 { font-size: 18px; font-weight: 600; }
 .model { font-size: 13px; color: #666; font-family: ui-monospace, monospace; }
 .date { font-size: 13px; color: #666; }
-.meta-row { display: flex; align-items: center; }
-.toggles { font-size: 13px; color: #666; display: flex; gap: 16px; align-items: center; }
+.meta-row { display: flex; justify-content: flex-end; align-items: center; }
+.toggles { font-size: 13px; color: #666; display: flex; gap: 16px; }
 .toggles label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
-.token-summary { font-family: ui-monospace, monospace; border-left: 1px solid #ddd; padding-left: 16px; margin-left: 16px; }
+.token-summary { font-size: 13px; color: #666; font-family: ui-monospace, monospace; }
 .token-summary:empty { display: none; }
 .command { display: flex; align-items: center; gap: 8px; }
 .command-label { font-size: 11px; text-transform: uppercase; color: #999; font-weight: 500; }
