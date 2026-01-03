@@ -881,17 +881,27 @@ fn extract_transcript_meta(path: &Path) -> TranscriptMeta {
     meta
 }
 
+/// Token usage for a single message
+#[derive(Debug, Clone, Default)]
+struct MessageUsage {
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+}
+
 /// Result of parsing a transcript
 #[derive(Debug, Default)]
 struct ParseResult {
     messages: Vec<RenderedMessage>,
     /// Model usage counts for determining dominant model
     model_counts: HashMap<String, usize>,
-    /// Token usage totals
-    total_input_tokens: u64,
-    total_output_tokens: u64,
-    total_cache_read_tokens: u64,
-    total_cache_creation_tokens: u64,
+    /// Token usage by message ID (deduplicated - later values overwrite earlier)
+    usage_by_message_id: HashMap<String, MessageUsage>,
+    /// Token usage totals (for Codex cumulative totals, not deduplicated)
+    codex_total_input_tokens: u64,
+    codex_total_output_tokens: u64,
+    codex_total_cache_read_tokens: u64,
 }
 
 impl ParseResult {
@@ -905,6 +915,38 @@ impl ParseResult {
     /// Get the dominant (most used) model
     fn dominant_model(&self) -> Option<String> {
         self.models_by_usage().into_iter().next()
+    }
+
+    /// Compute total input tokens (Claude: sum deduplicated, Codex: use cumulative)
+    fn total_input_tokens(&self) -> u64 {
+        if self.codex_total_input_tokens > 0 {
+            self.codex_total_input_tokens
+        } else {
+            self.usage_by_message_id.values().map(|u| u.input_tokens).sum()
+        }
+    }
+
+    /// Compute total output tokens
+    fn total_output_tokens(&self) -> u64 {
+        if self.codex_total_output_tokens > 0 {
+            self.codex_total_output_tokens
+        } else {
+            self.usage_by_message_id.values().map(|u| u.output_tokens).sum()
+        }
+    }
+
+    /// Compute total cache read tokens
+    fn total_cache_read_tokens(&self) -> u64 {
+        if self.codex_total_cache_read_tokens > 0 {
+            self.codex_total_cache_read_tokens
+        } else {
+            self.usage_by_message_id.values().map(|u| u.cache_read_tokens).sum()
+        }
+    }
+
+    /// Compute total cache creation tokens
+    fn total_cache_creation_tokens(&self) -> u64 {
+        self.usage_by_message_id.values().map(|u| u.cache_creation_tokens).sum()
     }
 }
 
@@ -961,7 +1003,7 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                 continue;
             }
 
-            // Extract token usage from event_msg (don't create a message, just accumulate)
+            // Extract token usage from event_msg (Codex reports cumulative totals)
             if event_type == "event_msg" {
                 if let Some(payload_type) = value.pointer("/payload/type").and_then(|v| v.as_str())
                 {
@@ -969,17 +1011,17 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                         if let Some(usage) = value.pointer("/payload/info/total_token_usage") {
                             if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64())
                             {
-                                result.total_input_tokens = input; // total, not incremental
+                                result.codex_total_input_tokens = input; // cumulative total
                             }
                             if let Some(output) =
                                 usage.get("output_tokens").and_then(|v| v.as_u64())
                             {
-                                result.total_output_tokens = output;
+                                result.codex_total_output_tokens = output;
                             }
                             if let Some(cached) =
                                 usage.get("cached_input_tokens").and_then(|v| v.as_u64())
                             {
-                                result.total_cache_read_tokens = cached;
+                                result.codex_total_cache_read_tokens = cached;
                             }
                         }
                     }
@@ -1165,26 +1207,36 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                     *result.model_counts.entry(m.clone()).or_insert(0) += 1;
                 }
 
-                // Extract token usage from message.usage
+                // Extract token usage from message.usage, deduplicated by message.id
+                // Claude streams multiple updates for the same message ID - use last values
                 if let Some(usage) = value.pointer("/message/usage") {
-                    if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
-                        result.total_input_tokens += input;
-                    }
-                    if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
-                        result.total_output_tokens += output;
-                    }
-                    if let Some(cache_read) = usage
+                    let msg_id = value
+                        .pointer("/message/id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    let input = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let output = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let cache_read = usage
                         .get("cache_read_input_tokens")
                         .and_then(|v| v.as_u64())
-                    {
-                        result.total_cache_read_tokens += cache_read;
-                    }
-                    if let Some(cache_create) = usage
+                        .unwrap_or(0);
+                    let cache_create = usage
                         .get("cache_creation_input_tokens")
                         .and_then(|v| v.as_u64())
-                    {
-                        result.total_cache_creation_tokens += cache_create;
-                    }
+                        .unwrap_or(0);
+
+                    // Overwrite - later updates have final values
+                    result.usage_by_message_id.insert(
+                        msg_id,
+                        MessageUsage {
+                            input_tokens: input,
+                            output_tokens: output,
+                            cache_read_tokens: cache_read,
+                            cache_creation_tokens: cache_create,
+                        },
+                    );
                 }
 
                 // Assistant message: message.content is array of blocks
@@ -1318,6 +1370,10 @@ fn create_share_payload(
         .or(meta.first_user_message);
 
     let models = parsed.models_by_usage();
+    let total_input = parsed.total_input_tokens();
+    let total_output = parsed.total_output_tokens();
+    let total_cache_read = parsed.total_cache_read_tokens();
+    let total_cache_creation = parsed.total_cache_creation_tokens();
 
     Ok(SharePayload {
         tool: tool_display.to_string(),
@@ -1327,10 +1383,10 @@ fn create_share_payload(
         model: parsed.dominant_model(),
         models,
         messages: parsed.messages,
-        total_input_tokens: parsed.total_input_tokens,
-        total_output_tokens: parsed.total_output_tokens,
-        total_cache_read_tokens: parsed.total_cache_read_tokens,
-        total_cache_creation_tokens: parsed.total_cache_creation_tokens,
+        total_input_tokens: total_input,
+        total_output_tokens: total_output,
+        total_cache_read_tokens: total_cache_read,
+        total_cache_creation_tokens: total_cache_creation,
     })
 }
 
@@ -2018,18 +2074,39 @@ mod tests {
     fn parse_claude_token_usage() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("claude.jsonl");
+        // Two different messages with different IDs - usage is summed
         let data = concat!(
-            r#"{"type":"assistant","message":{"model":"claude-sonnet-4","usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":800,"cache_creation_input_tokens":200},"content":[{"type":"text","text":"Hello"}]}}"#,
+            r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4","usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":800,"cache_creation_input_tokens":200},"content":[{"type":"text","text":"Hello"}]}}"#,
             "\n",
-            r#"{"type":"assistant","message":{"model":"claude-sonnet-4","usage":{"input_tokens":1500,"output_tokens":300,"cache_read_input_tokens":1200,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"World"}]}}"#
+            r#"{"type":"assistant","message":{"id":"msg_2","model":"claude-sonnet-4","usage":{"input_tokens":1500,"output_tokens":300,"cache_read_input_tokens":1200,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"World"}]}}"#
         );
         fs::write(&path, data).unwrap();
 
         let result = parse_transcript(&path).unwrap();
-        assert_eq!(result.total_input_tokens, 2500);
-        assert_eq!(result.total_output_tokens, 800);
-        assert_eq!(result.total_cache_read_tokens, 2000);
-        assert_eq!(result.total_cache_creation_tokens, 200);
+        assert_eq!(result.total_input_tokens(), 2500);
+        assert_eq!(result.total_output_tokens(), 800);
+        assert_eq!(result.total_cache_read_tokens(), 2000);
+        assert_eq!(result.total_cache_creation_tokens(), 200);
+    }
+
+    #[test]
+    fn parse_claude_token_usage_dedup() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        // Same message ID streamed multiple times - only last values count
+        let data = concat!(
+            r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4","usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"H"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Hello"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4","usage":{"input_tokens":100,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Hello World"}]}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        // Should use final values (100, 100), not sum (100+100+100)
+        assert_eq!(result.total_input_tokens(), 100);
+        assert_eq!(result.total_output_tokens(), 100);
     }
 
     #[test]
@@ -2094,10 +2171,10 @@ mod tests {
         fs::write(&path, data).unwrap();
 
         let result = parse_transcript(&path).unwrap();
-        // Should have final totals (not cumulative since Codex reports totals)
-        assert_eq!(result.total_input_tokens, 2500);
-        assert_eq!(result.total_output_tokens, 1200);
-        assert_eq!(result.total_cache_read_tokens, 800);
+        // Should have final totals (Codex reports cumulative totals)
+        assert_eq!(result.total_input_tokens(), 2500);
+        assert_eq!(result.total_output_tokens(), 1200);
+        assert_eq!(result.total_cache_read_tokens(), 800);
     }
 
     #[test]
