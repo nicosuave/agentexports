@@ -829,14 +829,57 @@ function render(data) {{
         document.getElementById('messages').classList.toggle('hide-thinking', !this.checked);
     }});
 
-    // Display token summary if available
+    // Display token summary with cost
     const tokenEl = document.getElementById('token-summary');
     const input = data.total_input_tokens || 0;
     const output = data.total_output_tokens || 0;
+    const cacheRead = data.total_cache_read_tokens || 0;
+    const cacheCreate = data.total_cache_creation_tokens || 0;
+
     if (input > 0 || output > 0) {{
         const formatNum = n => n >= 1000 ? (n / 1000).toFixed(1) + 'K' : n.toString();
-        tokenEl.textContent = formatNum(input) + ' input · ' + formatNum(output) + ' output tokens';
+        const parts = [formatNum(input) + ' input'];
+        if (cacheRead > 0) parts.push(formatNum(cacheRead) + ' cached');
+        parts.push(formatNum(output) + ' output');
+
+        const model = (data.models && data.models[0]) || '';
+        const cost = calculateCost(model, input, output, cacheRead, cacheCreate);
+        if (cost !== null) {{
+            parts.push('$' + (cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)));
+        }}
+        tokenEl.textContent = parts.join(' · ');
     }}
+}}
+
+// Model pricing (per token)
+const PRICING = {{
+    'claude-opus-4-5': {{ input: 15e-6, output: 75e-6, cacheRead: 1.5e-6, cacheCreate: 18.75e-6 }},
+    'claude-sonnet-4-5': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6 }},
+    'claude-sonnet-4': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6 }},
+    'claude-haiku-4-5': {{ input: 0.8e-6, output: 4e-6, cacheRead: 0.08e-6, cacheCreate: 1e-6 }},
+    'gpt-5': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6, cacheCreate: 0 }},
+    'gpt-5.1': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6, cacheCreate: 0 }},
+}};
+
+function normalizeModel(model) {{
+    if (!model) return '';
+    let m = model.toLowerCase();
+    m = m.replace(/^anthropic\./, '');
+    m = m.replace(/-\d{{8}}$/, ''); // strip date suffix like -20251101
+    m = m.replace(/-v\d+:\d+$/, ''); // strip version suffix
+    return m;
+}}
+
+function calculateCost(model, input, output, cacheRead, cacheCreate) {{
+    const normalized = normalizeModel(model);
+    const pricing = PRICING[normalized];
+    if (!pricing) return null;
+
+    const uncachedInput = Math.max(0, input - cacheRead);
+    return (uncachedInput * pricing.input)
+         + (output * pricing.output)
+         + (cacheRead * pricing.cacheRead)
+         + (cacheCreate * (pricing.cacheCreate || 0));
 }}
 
 async function main() {{
