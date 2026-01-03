@@ -451,24 +451,12 @@ async fn fetch_r2_metrics(api_token: &str, account_id: &str) -> Option<String> {
         .next()?
         .r2_storage_adaptive_groups;
 
-    // Aggregate by date (take max per day)
-    let mut by_date: std::collections::BTreeMap<String, (u64, u64)> = std::collections::BTreeMap::new();
-    for g in groups {
-        let date = g.dimensions.datetime.split('T').next()?.to_string();
-        if date.is_empty() {
-            continue;
-        }
-        let entry = by_date.entry(date).or_insert((0, 0));
-        entry.0 = entry.0.max(g.max.object_count);
-        entry.1 = entry.1.max(g.max.payload_size);
-    }
-
-    let data: Vec<R2MetricsDataPoint> = by_date
+    let data: Vec<R2MetricsDataPoint> = groups
         .into_iter()
-        .map(|(date, (objects, storage_bytes))| R2MetricsDataPoint {
-            date,
-            objects,
-            storage_bytes,
+        .map(|g| R2MetricsDataPoint {
+            date: g.dimensions.datetime,
+            objects: g.max.object_count,
+            storage_bytes: g.max.payload_size,
         })
         .collect();
 
