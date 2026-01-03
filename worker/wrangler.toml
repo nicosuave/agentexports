@@ -11,6 +11,9 @@ command = "cargo install -q worker-build && worker-build --release"
 binding = "TRANSCRIPTS"
 bucket_name = "agent-exports"
 
+[placement]
+mode = "smart"
+
 [vars]
 # Disable "forever" retention, max 365 days
 MAX_TTL_DAYS = "365"
