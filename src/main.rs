@@ -218,7 +218,7 @@ fn read_stdin() -> Result<String> {
     Ok(buf)
 }
 
-const REPO: &str = "nicosuave/agentexports";
+const REPO: &str = "nicosuave/agentexport";
 
 fn run_update(skip_confirm: bool) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
