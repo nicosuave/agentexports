@@ -96,7 +96,7 @@ Shares are stored locally in `~/.cache/agentexport/shares.json` with the decrypt
 
 ## Self-Hosting
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nicosuave/agentexports/tree/main/worker)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nicosuave/agentexport/tree/main/worker)
 
 ### Deploy the Worker
 
