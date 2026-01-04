@@ -1536,7 +1536,9 @@ function parseMarkdownTranscript(text) {{
     }}
 
     // Split by message headers (### Role)
-    const msgRegex = /^### ([^\n]+)\n\n([\s\S]*?)(?=^### |^---|$)/gm;
+    // Note: We use \z for end-of-string since $ matches end-of-line in multiline mode
+    // But JS doesn't support \z, so we use a two-pass approach or negative lookahead
+    const msgRegex = /^### ([^\n]+)\n\n([\s\S]*?)(?=\n### |\n---|\n\*Input:)/gm;
     let match;
     while ((match = msgRegex.exec(text)) !== null) {{
         const header = match[1];
