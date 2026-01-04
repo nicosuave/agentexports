@@ -587,6 +587,7 @@ const THEME_TOGGLE_CSS: &str = r#"
 fn homepage_html() -> String {
     let metrics_section = r##"
     <h2>Stats</h2>
+    <p class="subtitle"><em>Does not include gist-backed exports.</em></p>
     <div id="metrics-container" class="metrics-container"><span class="metrics-loading">Loading...</span></div>
     <script>
     (function() {
@@ -811,8 +812,6 @@ fn homepage_html() -> String {
         <a href="https://github.com/nicosuave/agentexport">GitHub</a>
     </header>
     <p class="tagline">Share Claude Code and Codex transcripts. No signup required.</p>
-    <p class="subtitle"><em>Stats below do not include gist-backed exports.</em></p>
-
     <h2>Install</h2>
     <div class="install-box" onclick="copyCmd(this)">
         <span class="tooltip">Click to copy</span>
