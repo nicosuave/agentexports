@@ -3,6 +3,12 @@
 use anyhow::{Context, Result, bail};
 use rand::RngCore;
 use serde::Deserialize;
+use serde_json::Value;
+use std::fs;
+use std::io;
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tempfile::tempdir;
 
 #[derive(Deserialize)]
 struct UploadResponse {
@@ -26,6 +32,90 @@ fn generate_delete_token() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     hex::encode(bytes)
+}
+
+fn far_future_expires_at() -> u64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    now.saturating_add(60 * 60 * 24 * 365 * 100)
+}
+
+pub fn upload_gist(upload_url: &str, payload_json: &str, description: &str) -> Result<UploadResult> {
+    ensure_gh_ready()?;
+    let body = serde_json::json!({
+        "public": false,
+        "description": description,
+        "files": {
+            "agentexport.json": {
+                "content": payload_json
+            }
+        }
+    });
+
+    let temp = tempdir().context("Failed to create temp dir for gist payload")?;
+    let body_path = temp.path().join("gist.json");
+    let body_bytes = serde_json::to_vec(&body).context("Failed to serialize gist payload")?;
+    fs::write(&body_path, body_bytes).context("Failed to write gist payload")?;
+
+    let output = Command::new("gh")
+        .args(["api", "gists", "--input"])
+        .arg(&body_path)
+        .output()
+        .context("Failed to run gh api for gist create")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("gh api gist create failed: {}", stderr.trim());
+    }
+
+    let response: Value =
+        serde_json::from_slice(&output.stdout).context("Failed to parse gist response")?;
+    let id = response
+        .get("id")
+        .and_then(|v| v.as_str())
+        .context("Missing id in gist response")?;
+    let share_url = response
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .context("Missing html_url in gist response")?;
+
+    Ok(UploadResult {
+        id: id.to_string(),
+        key: String::new(),
+        delete_token: String::new(),
+        share_url: share_url.to_string(),
+        upload_url: upload_url.to_string(),
+        expires_at: far_future_expires_at(),
+    })
+}
+
+fn ensure_gh_ready() -> Result<()> {
+    let output = Command::new("gh")
+        .args(["auth", "status", "-h", "github.com"])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let detail = if !stderr.trim().is_empty() {
+                stderr.trim().to_string()
+            } else {
+                stdout.trim().to_string()
+            };
+            if detail.is_empty() {
+                bail!("gh auth status failed; run `gh auth login`");
+            }
+            bail!("gh auth status failed; run `gh auth login`. {}", detail);
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            bail!("gh not found; install GitHub CLI and run `gh auth login`");
+        }
+        Err(err) => Err(err.into()),
+    }
 }
 
 /// Upload encrypted blob to worker, return upload result with all metadata

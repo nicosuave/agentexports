@@ -19,7 +19,7 @@ mod setup;
 pub mod shares;
 mod upload;
 
-pub use config::Config;
+pub use config::{Config, StorageType};
 pub use setup::run as run_setup;
 
 const APP_NAME: &str = "agentexport";
@@ -72,6 +72,7 @@ pub struct PublishOptions {
     pub upload_url: Option<String>,
     pub render: bool,
     pub ttl_days: u64,
+    pub storage_type: StorageType,
 }
 
 #[derive(Debug, Serialize)]
@@ -1644,6 +1645,35 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
     // Handle upload
     let (share_url, note) = if options.dry_run {
         (None, "upload skipped (dry-run)".to_string())
+    } else if options.upload_url.is_none() {
+        (None, "upload skipped (no upload_url)".to_string())
+    } else if options.storage_type == StorageType::Gist {
+        let json = payload_json.expect("Payload should be created for upload");
+        let description = format!(
+            "agentexport share ({}, {})",
+            options.tool.as_str(),
+            format_generated_at_nice()
+        );
+        let result = upload::upload_gist("gist", &json, &description)?;
+
+        // Save share locally for management
+        let share_url = result.share_url.clone();
+        let share = shares::Share {
+            id: result.id,
+            key: result.key,
+            delete_token: result.delete_token,
+            upload_url: result.upload_url,
+            share_url: Some(share_url),
+            created_at: time::OffsetDateTime::now_utc(),
+            expires_at: time::OffsetDateTime::from_unix_timestamp(result.expires_at as i64)
+                .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+            tool: options.tool.as_str().to_string(),
+            transcript_path: transcript_path.display().to_string(),
+            storage_type: options.storage_type,
+        };
+        shares::save_share(&share)?;
+
+        (Some(result.share_url), "uploaded successfully".to_string())
     } else if let Some(upload_url) = &options.upload_url {
         let json = payload_json.expect("Payload should be created for upload");
         let encrypted = crypto::encrypt_html(&json)?;
@@ -1655,16 +1685,19 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
         )?;
 
         // Save share locally for management
+        let share_url = result.share_url.clone();
         let share = shares::Share {
             id: result.id,
             key: result.key,
             delete_token: result.delete_token,
             upload_url: result.upload_url,
+            share_url: Some(share_url),
             created_at: time::OffsetDateTime::now_utc(),
             expires_at: time::OffsetDateTime::from_unix_timestamp(result.expires_at as i64)
                 .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
             tool: options.tool.as_str().to_string(),
             transcript_path: transcript_path.display().to_string(),
+            storage_type: options.storage_type,
         };
         shares::save_share(&share)?;
 
@@ -1872,6 +1905,7 @@ mod tests {
             upload_url: None,
             render: true,
             ttl_days: 30,
+            storage_type: StorageType::Agentexport,
         })
         .unwrap();
 
@@ -1913,6 +1947,7 @@ mod tests {
             upload_url: None,
             render: false,
             ttl_days: 30,
+            storage_type: StorageType::Agentexport,
         })
         .unwrap();
 
@@ -1965,6 +2000,7 @@ mod tests {
             upload_url: None,
             render: false,
             ttl_days: 30,
+            storage_type: StorageType::Agentexport,
         })
         .unwrap();
 
@@ -2009,6 +2045,7 @@ mod tests {
             upload_url: None,
             render: false,
             ttl_days: 30,
+            storage_type: StorageType::Agentexport,
         })
         .unwrap_err();
 

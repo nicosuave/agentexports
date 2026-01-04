@@ -3,7 +3,15 @@ use clap::{Parser, Subcommand};
 use std::io::Read;
 use std::path::PathBuf;
 
-use agentexport::{Config, PublishOptions, Tool, handle_claude_sessionstart, publish, run_setup};
+use agentexport::{
+    Config,
+    PublishOptions,
+    StorageType,
+    Tool,
+    handle_claude_sessionstart,
+    publish,
+    run_setup,
+};
 
 mod shares_cmd;
 
@@ -89,7 +97,7 @@ enum ConfigAction {
     Show,
     /// Set a config value
     Set {
-        /// Key to set (default_ttl, upload_url)
+        /// Key to set (default_ttl, storage_type, upload_url)
         key: String,
         /// Value to set
         value: String,
@@ -127,12 +135,15 @@ fn run() -> Result<()> {
         } => {
             let config = Config::load().unwrap_or_default();
             let effective_ttl = ttl.unwrap_or(config.default_ttl);
+            let effective_storage_type = config.storage_type;
             let effective_upload_url = if no_upload {
                 None
+            } else if effective_storage_type == StorageType::Gist {
+                Some("gist".to_string())
             } else {
                 Some(upload_url.unwrap_or(config.upload_url))
             };
-            let has_upload_url = effective_upload_url.is_some();
+            let has_upload_target = effective_upload_url.is_some();
             let result = publish(PublishOptions {
                 tool,
                 term_key,
@@ -143,11 +154,12 @@ fn run() -> Result<()> {
                 upload_url: effective_upload_url,
                 render,
                 ttl_days: effective_ttl,
+                storage_type: effective_storage_type,
             })?;
 
             // When uploading, print just the share URL to stdout (for piping)
             // Otherwise, print full JSON result
-            if has_upload_url {
+            if has_upload_target {
                 if let Some(url) = &result.share_url {
                     println!("{url}");
                 } else {
@@ -179,6 +191,7 @@ fn handle_config(action: Option<ConfigAction>) -> Result<()> {
         None | Some(ConfigAction::Show) => {
             let config = Config::load().unwrap_or_default();
             println!("default_ttl = {}", config.default_ttl);
+            println!("storage_type = \"{}\"", config.storage_type);
             println!("upload_url = \"{}\"", config.upload_url);
         }
         Some(ConfigAction::Set { key, value }) => {
@@ -192,6 +205,9 @@ fn handle_config(action: Option<ConfigAction>) -> Result<()> {
                         anyhow::bail!("invalid ttl: must be 0, 30, 60, 90, 180, or 365");
                     }
                     config.default_ttl = ttl;
+                }
+                "storage_type" | "storage" => {
+                    config.storage_type = StorageType::parse(&value)?;
                 }
                 "upload_url" | "url" => {
                     config.upload_url = value;
