@@ -1,0 +1,19 @@
+# cargo-release configuration
+# Install: cargo install cargo-release
+# Usage: cargo release patch|minor|major
+
+# Tag name format (v0.1.13)
+tag-name = "v{{version}}"
+
+# Push to remote after release
+push = true
+
+# Create and push git tag
+tag = true
+
+# Sign commits (set to true if you use GPG signing)
+sign-commit = false
+sign-tag = false
+
+# Don't publish to crates.io (GitHub releases handle distribution)
+publish = false
