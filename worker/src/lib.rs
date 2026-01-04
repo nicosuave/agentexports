@@ -753,7 +753,8 @@ fn homepage_html() -> String {
         header {{ display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.25rem; }}
         h1 {{ margin: 0; }}
         header a {{ color: var(--text-secondary); font-size: 0.9rem; }}
-        .tagline {{ color: var(--text-secondary); margin-bottom: 2rem; }}
+        .tagline {{ color: var(--text-secondary); margin-bottom: 0.5rem; }}
+        .subtitle {{ color: var(--text-muted); font-size: 0.85rem; margin-bottom: 2rem; }}
         h2 {{ font-size: 1rem; margin-top: 2rem; color: var(--text); }}
         p {{ margin: 0.5rem 0; }}
         code {{ background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }}
@@ -810,6 +811,7 @@ fn homepage_html() -> String {
         <a href="https://github.com/nicosuave/agentexport">GitHub</a>
     </header>
     <p class="tagline">Share Claude Code and Codex transcripts. No signup required.</p>
+    <p class="subtitle"><em>Stats below do not include gist-backed exports.</em></p>
 
     <h2>Install</h2>
     <div class="install-box" onclick="copyCmd(this)">
