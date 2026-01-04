@@ -54,7 +54,7 @@ fn unshare(id: &str) -> Result<()> {
     match share {
         Some(share) => {
             // Delete from server
-            println!("Deleting share {} from server...", id);
+            println!("Deleting share {id} from server...");
             match delete_share(&share) {
                 Ok(()) => println!("Deleted from server."),
                 Err(e) => println!("Server delete failed (may already be gone): {e}"),
@@ -66,7 +66,7 @@ fn unshare(id: &str) -> Result<()> {
             Ok(())
         }
         None => {
-            bail!("Share not found: {}", id);
+            bail!("Share not found: {id}");
         }
     }
 }
@@ -213,7 +213,7 @@ fn delete_from_server(share: &Share) -> Result<()> {
 
     if response.status() >= 400 {
         let status = response.status();
-        bail!("Delete failed with status {}", status);
+        bail!("Delete failed with status {status}");
     }
 
     Ok(())

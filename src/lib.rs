@@ -581,6 +581,7 @@ fn normalize_role(role: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn role_from_type(value: &str) -> Option<String> {
     let lower = value.to_lowercase();
     if lower.contains("assistant") || lower.contains("model") {
@@ -596,6 +597,7 @@ fn role_from_type(value: &str) -> Option<String> {
     }
 }
 
+#[allow(dead_code)]
 fn extract_role(value: &Value) -> Option<String> {
     if let Some(role) = value.get("role").and_then(|v| v.as_str()) {
         return Some(normalize_role(role));
@@ -800,6 +802,7 @@ fn extract_content(value: &Value) -> Option<String> {
     None
 }
 
+#[allow(dead_code)]
 fn summarize_event(value: &Value) -> Option<String> {
     if let Some(kind) = value.get("type").and_then(|v| v.as_str()) {
         return Some(format!("event: {kind}"));

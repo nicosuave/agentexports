@@ -236,7 +236,23 @@ fn read_stdin() -> Result<String> {
 
 const REPO: &str = "nicosuave/agentexport";
 
+fn is_homebrew_install() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| {
+            p.to_str()
+                .map(|s| s.contains("/Cellar/") || s.contains("/homebrew/"))
+        })
+        .unwrap_or(false)
+}
+
 fn run_update(skip_confirm: bool) -> Result<()> {
+    if is_homebrew_install() {
+        println!("agentexport was installed via Homebrew.");
+        println!("Run 'brew upgrade agentexport' to update.");
+        return Ok(());
+    }
+
     let current = env!("CARGO_PKG_VERSION");
     let latest = fetch_latest_version()?;
 
@@ -377,14 +393,20 @@ fn detect_platform() -> Result<(&'static str, &'static str)> {
 
 /// Check for updates in the background and print a warning if outdated.
 fn check_for_update_async() {
-    std::thread::spawn(|| {
+    let is_brew = is_homebrew_install();
+    std::thread::spawn(move || {
         if let Ok(latest) = fetch_latest_version() {
             let current = env!("CARGO_PKG_VERSION");
             if current != latest {
+                let upgrade_cmd = if is_brew {
+                    "brew upgrade agentexport"
+                } else {
+                    "agentexport update"
+                };
                 eprintln!(
                     "\x1b[33mA new version of agentexport is available: v{latest} (current: v{current})\x1b[0m"
                 );
-                eprintln!("\x1b[33mRun 'agentexport update' to upgrade.\x1b[0m");
+                eprintln!("\x1b[33mRun '{upgrade_cmd}' to upgrade.\x1b[0m");
             }
         }
     });
