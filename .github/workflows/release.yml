@@ -37,10 +37,11 @@ jobs:
           artifact="agentexport-${version}-macos-${arch}.tar.gz"
           tar -C target/${{ matrix.target }}/release -czf "${artifact}" agentexport
           shasum -a 256 "${artifact}" > "${artifact}.sha256"
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: agentexport-macos-${{ matrix.arch }}
+          path: |
             agentexport-*.tar.gz
             agentexport-*.sha256
 
@@ -79,9 +80,24 @@ jobs:
           artifact="agentexport-${version}-linux-${arch}.tar.gz"
           tar -C target/${{ matrix.target }}/release -czf "${artifact}" agentexport
           sha256sum "${artifact}" > "${artifact}.sha256"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentexport-linux-${{ matrix.arch }}
+          path: |
+            agentexport-*.tar.gz
+            agentexport-*.sha256
+
+  release:
+    needs: [build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            agentexport-*.tar.gz
-            agentexport-*.sha256
+          files: artifacts/*
