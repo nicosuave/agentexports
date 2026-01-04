@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use dialoguer::{Select, theme::ColorfulTheme};
 use time::format_description;
 
-use agentexport::{StorageType, is_gist_upload_url, shares::{self, Share}};
+use agentexport::{StorageType, shares::{self, Share}};
 
 use crate::SharesAction;
 
@@ -183,7 +183,7 @@ fn interactive() -> Result<()> {
 }
 
 fn delete_share(share: &Share) -> Result<()> {
-    if share.storage_type == StorageType::Gist || is_gist_upload_url(&share.upload_url) {
+    if share.storage_type == StorageType::Gist {
         delete_from_gist(share)
     } else {
         delete_from_server(share)

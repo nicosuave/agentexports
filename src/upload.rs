@@ -27,18 +27,6 @@ pub struct UploadResult {
     pub expires_at: u64,
 }
 
-pub fn is_gist_upload_url(upload_url: &str) -> bool {
-    let trimmed = upload_url.trim();
-    if trimmed.eq_ignore_ascii_case("gist") {
-        return true;
-    }
-    let lower = trimmed.to_lowercase();
-    if lower.starts_with("gist:") || lower.starts_with("gist://") {
-        return true;
-    }
-    lower.starts_with("https://gist.github.com") || lower.starts_with("http://gist.github.com")
-}
-
 /// Generate a random delete token (64 hex chars)
 fn generate_delete_token() -> String {
     let mut bytes = [0u8; 32];
@@ -219,7 +207,6 @@ pub enum BlobStatus {
 mod tests {
     // Integration tests would require a running worker
     // Unit tests for URL construction
-    use super::is_gist_upload_url;
 
     #[test]
     fn test_url_construction() {
@@ -245,14 +232,5 @@ mod tests {
             url,
             "https://agentexports.com/v/abc123def456#SGVsbG8gV29ybGQ"
         );
-    }
-
-    #[test]
-    fn test_is_gist_upload_url() {
-        assert!(is_gist_upload_url("gist"));
-        assert!(is_gist_upload_url("gist://"));
-        assert!(is_gist_upload_url("https://gist.github.com"));
-        assert!(is_gist_upload_url("http://gist.github.com/test"));
-        assert!(!is_gist_upload_url("https://agentexports.com"));
     }
 }

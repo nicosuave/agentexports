@@ -128,7 +128,7 @@ mod tests {
             delete_token: "token123".to_string(),
             upload_url: "https://example.com".to_string(),
             share_url: None,
-            storage_type: StorageType::Server,
+            storage_type: StorageType::Agentexport,
             created_at: OffsetDateTime::now_utc(),
             expires_at: OffsetDateTime::now_utc(),
             tool: "claude".to_string(),

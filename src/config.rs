@@ -6,30 +6,30 @@ use std::path::PathBuf;
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageType {
-    Server,
+    Agentexport,
     Gist,
 }
 
 impl StorageType {
     pub fn parse(value: &str) -> Result<Self> {
         match value.trim().to_lowercase().as_str() {
-            "server" | "worker" | "r2" => Ok(Self::Server),
-            "gist" | "gists" => Ok(Self::Gist),
-            _ => bail!("invalid storage_type: must be server or gist"),
+            "agentexport" => Ok(Self::Agentexport),
+            "gist" => Ok(Self::Gist),
+            _ => bail!("invalid storage_type: must be agentexport or gist"),
         }
     }
 }
 
 impl Default for StorageType {
     fn default() -> Self {
-        StorageType::Server
+        StorageType::Agentexport
     }
 }
 
 impl std::fmt::Display for StorageType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = match self {
-            StorageType::Server => "server",
+            StorageType::Agentexport => "agentexport",
             StorageType::Gist => "gist",
         };
         write!(f, "{value}")
@@ -42,7 +42,7 @@ pub struct Config {
     #[serde(default = "default_ttl")]
     pub default_ttl: u64,
 
-    /// Storage backend (server or gist)
+    /// Storage backend (agentexport or gist)
     #[serde(default = "default_storage_type")]
     pub storage_type: StorageType,
 
@@ -60,7 +60,7 @@ fn default_upload_url() -> String {
 }
 
 fn default_storage_type() -> StorageType {
-    StorageType::Server
+    StorageType::Agentexport
 }
 
 fn config_path() -> Result<PathBuf> {
@@ -130,7 +130,7 @@ mod tests {
     fn config_defaults() {
         let config = Config::default();
         assert_eq!(config.default_ttl, 30);
-        assert_eq!(config.storage_type, StorageType::Server);
+        assert_eq!(config.storage_type, StorageType::Agentexport);
         assert_eq!(config.upload_url, "https://agentexports.com");
     }
 
@@ -139,7 +139,7 @@ mod tests {
         let content = "default_ttl = 60\n";
         let config: Config = toml::from_str(content).unwrap();
         assert_eq!(config.default_ttl, 60);
-        assert_eq!(config.storage_type, StorageType::Server);
+        assert_eq!(config.storage_type, StorageType::Agentexport);
         assert_eq!(config.upload_url, "https://agentexports.com");
     }
 

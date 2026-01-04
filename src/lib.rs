@@ -21,7 +21,6 @@ mod upload;
 
 pub use config::{Config, StorageType};
 pub use setup::run as run_setup;
-pub use upload::is_gist_upload_url;
 
 const APP_NAME: &str = "agentexport";
 
@@ -1906,7 +1905,7 @@ mod tests {
             upload_url: None,
             render: true,
             ttl_days: 30,
-            storage_type: StorageType::Server,
+            storage_type: StorageType::Agentexport,
         })
         .unwrap();
 
@@ -1948,7 +1947,7 @@ mod tests {
             upload_url: None,
             render: false,
             ttl_days: 30,
-            storage_type: StorageType::Server,
+            storage_type: StorageType::Agentexport,
         })
         .unwrap();
 
@@ -2001,7 +2000,7 @@ mod tests {
             upload_url: None,
             render: false,
             ttl_days: 30,
-            storage_type: StorageType::Server,
+            storage_type: StorageType::Agentexport,
         })
         .unwrap();
 
@@ -2046,7 +2045,7 @@ mod tests {
             upload_url: None,
             render: false,
             ttl_days: 30,
-            storage_type: StorageType::Server,
+            storage_type: StorageType::Agentexport,
         })
         .unwrap_err();
 
