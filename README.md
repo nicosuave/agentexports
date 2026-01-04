@@ -96,6 +96,17 @@ agentexport shares unshare <id>
 
 Shares are stored locally in `~/.cache/agentexport/shares.json` with the decryption keys needed for deletion.
 
+### GitHub Gist Backend (No Encryption)
+
+You can upload to GitHub Gist instead of the default server. This stores the share payload as a gist and returns the gist URL. Requires the GitHub CLI to be authenticated.
+
+```bash
+gh auth login
+agentexport config set storage_type gist
+```
+
+Gists are created as secret (unlisted) by default. Gists are not encrypted and do not expire. The TTL setting is ignored. `upload_url` is ignored for the gist backend.
+
 ## Self-Hosting
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nicosuave/agentexport/tree/main/worker)
