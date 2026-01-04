@@ -5,6 +5,9 @@
 # Tag name format (v0.1.13)
 tag-name = "v{{version}}"
 
+# Commit message format (no "chore: " prefix)
+pre-release-commit-message = "Release {{crate_name}} version {{version}}"
+
 # Push to remote after release
 push = true
 
