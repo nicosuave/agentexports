@@ -625,7 +625,7 @@ fn homepage_html() -> String {
                 <span>${formatDate(points[points.length - 1].date)}</span>
             </div>
             <div class="metrics-legend">
-                <span><span class="legend-line objects"></span>shares</span>
+                <span><span class="legend-line objects"></span>active shares</span>
                 <span><span class="legend-line storage"></span>storage</span>
             </div>
         `;
@@ -668,7 +668,7 @@ fn homepage_html() -> String {
             const idx = Math.round(((x - pad.l) / cw) * (points.length - 1));
             if (idx >= 0 && idx < points.length) {
                 const p = points[idx];
-                tooltip.innerHTML = `${formatNum(p.objects)} shares · ${formatBytes(p.storage_bytes)}`;
+                tooltip.innerHTML = `${formatNum(p.objects)} active shares · ${formatBytes(p.storage_bytes)}`;
                 tooltip.style.opacity = '1';
                 tooltip.style.left = ((x / canvas.width) * 100) + '%';
             }
