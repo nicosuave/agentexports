@@ -107,6 +107,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get("/og/viewer.png", |_, _| serve_png(OG_VIEWER))
         .post_async("/upload", handle_upload)
         .get_async("/v/:id", handle_viewer)
+        .get_async("/g/:gist_id", handle_gist_viewer)
         .get_async("/blob/:id", handle_blob)
         .delete_async("/blob/:id", handle_delete)
         .options_async("/upload", handle_cors_preflight)
@@ -307,11 +308,38 @@ async fn handle_viewer(_req: Request, ctx: RouteContext<()>) -> Result<Response>
 
     response.headers_mut().set(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-src 'self' blob:",
+        "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; frame-src 'self' blob:",
     )?;
     response
         .headers_mut()
         .set("X-Content-Type-Options", "nosniff")?;
+
+    Ok(response)
+}
+
+async fn handle_gist_viewer(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let gist_id = ctx.param("gist_id").unwrap();
+
+    // Validate gist ID format (should be hex string)
+    if !gist_id.chars().all(|c| c.is_ascii_hexdigit()) || gist_id.len() < 20 {
+        return Response::error("Invalid gist ID", 400);
+    }
+
+    // Return lightweight HTML shell - browser fetches gist content directly
+    let html = gist_viewer_html(gist_id);
+    let mut response = Response::from_html(html)?;
+
+    response.headers_mut().set(
+        "Content-Security-Policy",
+        "default-src 'self' https://api.github.com https://gist.githubusercontent.com; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; frame-src 'self' blob:; connect-src 'self' https://api.github.com https://gist.githubusercontent.com",
+    )?;
+    response
+        .headers_mut()
+        .set("X-Content-Type-Options", "nosniff")?;
+    // Cache the shell for longer since it doesn't contain content
+    response
+        .headers_mut()
+        .set("Cache-Control", "public, max-age=3600")?;
 
     Ok(response)
 }
@@ -892,6 +920,104 @@ echo "Run 'agentexport setup' to configure Claude Code or Codex"
 "##.to_string()
 }
 
+// CDN URL for marked.js markdown parser
+const MARKED_CDN: &str = "https://cdn.jsdelivr.net/npm/marked@15/lib/marked.umd.min.js";
+
+fn gist_viewer_html(gist_id: &str) -> String {
+    let og_url = format!("https://agentexports.com/g/{}", gist_id);
+
+    let markup = html! {
+        (DOCTYPE)
+        html lang="en" {
+            head {
+                meta charset="UTF-8";
+                meta name="viewport" content="width=device-width, initial-scale=1.0";
+                title { "Shared Transcript" }
+                meta name="description" content="View a shared Claude Code or Codex session transcript.";
+                meta property="og:type" content="article";
+                meta property="og:title" content="Shared Transcript";
+                meta property="og:description" content="View a shared Claude Code or Codex session transcript.";
+                meta property="og:url" content=(og_url);
+                meta property="og:image" content="https://agentexports.com/og/viewer.png";
+                meta name="twitter:card" content="summary_large_image";
+                meta name="twitter:title" content="Shared Transcript";
+                meta name="twitter:description" content="View a shared Claude Code or Codex session transcript.";
+                meta name="twitter:image" content="https://agentexports.com/og/viewer.png";
+                // Start fetch immediately in head, before DOM loads
+                script { (PreEscaped(gist_prefetch_js(gist_id))) }
+                script { (PreEscaped(THEME_SCRIPT)) }
+                script src=(MARKED_CDN) {}
+                style { (PreEscaped(VIEWER_CSS)) }
+            }
+            body {
+                (PreEscaped(THEME_TOGGLE_BUTTON))
+                div #loading class="loading" {
+                    div class="spinner" {}
+                    p { "Loading..." }
+                }
+                div #error class="error" style="display:none" {
+                    h2 { "Failed to Load" }
+                    p #error-message {}
+                }
+                div #app style="display:none" {
+                    header {
+                        div class="title-row" {
+                            div class="title-left" {
+                                h1 #tool-name { "Transcript" }
+                                span #model-info class="model" {}
+                            }
+                            span #shared-at class="date" {}
+                        }
+                        div class="meta-row" {
+                            div class="token-col" {
+                                span #token-summary class="token-summary" {}
+                                span #token-summary-2 class="token-summary" {}
+                            }
+                            div class="toggles" {
+                                label {
+                                    input #show-thinking type="checkbox" checked;
+                                    " Show thinking"
+                                }
+                                label {
+                                    input #show-details type="checkbox";
+                                    " Show tool calls"
+                                }
+                            }
+                        }
+                    }
+                    section #messages class="messages hide-details" {}
+                    footer {
+                        "via "
+                        a href="https://agentexports.com" { "agentexports.com" }
+                        " · "
+                        a href=(format!("https://gist.github.com/{}", gist_id)) { "view raw gist" }
+                    }
+                }
+                script { (PreEscaped(gist_viewer_js())) }
+            }
+        }
+    };
+    markup.into_string()
+}
+
+// Small script in <head> to start fetch immediately
+fn gist_prefetch_js(gist_id: &str) -> String {
+    format!(
+        r#"window.GIST_ID = "{gist_id}";
+window.gistPromise = fetch("https://api.github.com/gists/{gist_id}")
+    .then(r => {{ if (!r.ok) throw new Error("Gist not found"); return r.json(); }})
+    .then(g => {{
+        const files = g.files;
+        const file = files["transcript.md"] || files["agentexport.json"] || Object.values(files)[0];
+        if (!file) throw new Error("No files in gist");
+        window.gistFilename = file.filename;
+        return fetch(file.raw_url);
+    }})
+    .then(r => {{ if (!r.ok) throw new Error("Failed to fetch content"); return r.text(); }});"#,
+        gist_id = gist_id
+    )
+}
+
 fn viewer_html(blob_id: &str) -> String {
     let og_url = format!("https://agentexports.com/v/{}", blob_id);
     let markup = html! {
@@ -912,6 +1038,7 @@ fn viewer_html(blob_id: &str) -> String {
                 meta name="twitter:description" content="View a shared Claude Code or Codex session transcript.";
                 meta name="twitter:image" content="https://agentexports.com/og/viewer.png";
                 script { (PreEscaped(THEME_SCRIPT)) }
+                script src=(MARKED_CDN) {}
                 style { (PreEscaped(VIEWER_CSS)) }
             }
             body {
@@ -1103,120 +1230,37 @@ footer a:hover { text-decoration: underline; }
 [data-theme="dark"] .theme-toggle .icon-moon { display: none; }
 "#;
 
-fn viewer_js(blob_id: &str) -> String {
-    format!(
-        r#"
-const BLOB_ID = "{blob_id}";
-
-// Minimal markdown parser with table support
-function md(text) {{
-    if (!text) return '';
-
-    // Extract code blocks first (before any processing)
-    const codeBlocks = [];
-    text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {{
-        const placeholder = '%%CODE' + codeBlocks.length + '%%';
-        codeBlocks.push('<pre><code>' + escapeHtml(code) + '</code></pre>');
-        return placeholder;
-    }});
-
-    // Extract inline code
-    const inlineCodes = [];
-    text = text.replace(/`([^`]+)`/g, (m, code) => {{
-        const placeholder = '%%INLINE' + inlineCodes.length + '%%';
-        inlineCodes.push('<code>' + escapeHtml(code) + '</code>');
-        return placeholder;
-    }});
-
-    // Extract tables
-    const tableRegex = /^\|(.+)\|\n\|[-:\| ]+\|\n((?:\|.+\|\n?)+)/gm;
-    const tables = [];
-    text = text.replace(tableRegex, (match, headerRow, bodyRows) => {{
-        const headers = headerRow.split('|').map(h => h.trim()).filter(h => h);
-        const rows = bodyRows.trim().split('\n').map(row =>
-            row.split('|').map(c => c.trim()).filter(c => c)
-        );
-        let table = '<table><thead><tr>';
-        headers.forEach(h => {{ table += '<th>' + escapeHtml(h) + '</th>'; }});
-        table += '</tr></thead><tbody>';
-        rows.forEach(row => {{
-            table += '<tr>';
-            row.forEach(c => {{ table += '<td>' + escapeHtml(c) + '</td>'; }});
-            table += '</tr>';
-        }});
-        table += '</tbody></table>';
-        const placeholder = '%%TABLE' + tables.length + '%%';
-        tables.push(table);
-        return placeholder;
-    }});
-
-    // Now escape HTML
-    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-    // Process markdown
-    text = text
-        // Bold (must come before italic)
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/__(.+?)__/g, '<strong>$1</strong>')
-        // Italic
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/_(.+?)_/g, '<em>$1</em>')
-        // Headers
-        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-        // Lists
-        .replace(/^- (.+)$/gm, '<li>$1</li>')
-        .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
-        // Links
-        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-
-    // Paragraphs
-    text = text.split(/\n\n+/).map(p => {{
-        if (p.startsWith('<h') || p.startsWith('<pre') || p.startsWith('<ul') || p.startsWith('%%') || p.includes('<li>')) return p;
-        return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
-    }}).join('');
-
-    // Restore placeholders
-    tables.forEach((t, i) => {{ text = text.replace('%%TABLE' + i + '%%', t); }});
-    inlineCodes.forEach((c, i) => {{ text = text.replace('%%INLINE' + i + '%%', c); }});
-    codeBlocks.forEach((c, i) => {{ text = text.replace('%%CODE' + i + '%%', c); }});
-
-    return text;
-}}
-
-function escapeHtml(str) {{
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}}
-
+// Shared JS for both encrypted and gist viewers (render, pricing, etc)
+// Note: markdown parsing uses marked.js loaded from CDN
+const VIEWER_JS_COMMON: &str = r#"
 // Parse command messages like <command-message>x</command-message><command-name>/x</command-name>
-function parseCommand(text) {{
+function parseCommand(text) {
     const msgMatch = text.match(/<command-message>([^<]*)<\/command-message>/);
     const nameMatch = text.match(/<command-name>([^<]*)<\/command-name>/);
-    if (nameMatch) {{
-        return {{ name: nameMatch[1], message: msgMatch ? msgMatch[1] : null }};
-    }}
+    if (nameMatch) {
+        return { name: nameMatch[1], message: msgMatch ? msgMatch[1] : null };
+    }
     return null;
-}}
+}
 
-function render(data) {{
+function render(data) {
     document.getElementById('tool-name').textContent = data.tool || 'Transcript';
     document.getElementById('shared-at').textContent = data.shared_at || '';
 
     // Model display
     const models = data.models || [];
     const modelEl = document.getElementById('model-info');
-    if (models.length === 1) {{
+    if (models.length === 1) {
         modelEl.textContent = models[0];
-    }} else if (models.length > 1) {{
+    } else if (models.length > 1) {
         modelEl.textContent = models.join(' + ');
-    }}
+    }
 
     const showMultipleModels = models.length > 1;
     const container = document.getElementById('messages');
     container.innerHTML = '';
 
-    for (const msg of data.messages || []) {{
+    for (const msg of data.messages || []) {
         const div = document.createElement('div');
         div.className = 'msg ' + (msg.role || 'event');
 
@@ -1228,12 +1272,12 @@ function render(data) {{
         role.textContent = msg.role || 'event';
         header.appendChild(role);
 
-        if (showMultipleModels && msg.model) {{
+        if (showMultipleModels && msg.model) {
             const model = document.createElement('span');
             model.className = 'msg-model';
             model.textContent = msg.model;
             header.appendChild(model);
-        }}
+        }
 
         div.appendChild(header);
 
@@ -1243,7 +1287,7 @@ function render(data) {{
 
         // Check if this is a command message
         const cmd = msg.role === 'user' ? parseCommand(msgContent) : null;
-        if (cmd) {{
+        if (cmd) {
             content.className = 'msg-content command';
             const label = document.createElement('span');
             label.className = 'command-label';
@@ -1253,14 +1297,14 @@ function render(data) {{
             name.className = 'command-name';
             name.textContent = cmd.name;
             content.appendChild(name);
-        }} else if (msg.role === 'tool') {{
+        } else if (msg.role === 'tool') {
             content.textContent = msgContent;
-        }} else {{
-            content.innerHTML = md(msgContent);
-        }}
+        } else {
+            content.innerHTML = marked.parse(msgContent);
+        }
         div.appendChild(content);
 
-        if (msg.raw) {{
+        if (msg.raw) {
             const details = document.createElement('details');
             details.className = 'raw';
             const summary = document.createElement('summary');
@@ -1270,18 +1314,18 @@ function render(data) {{
             pre.textContent = msg.raw;
             details.appendChild(pre);
             div.appendChild(details);
-        }}
+        }
 
         container.appendChild(div);
-    }}
+    }
 
-    document.getElementById('show-details').addEventListener('change', function() {{
+    document.getElementById('show-details').addEventListener('change', function() {
         document.getElementById('messages').classList.toggle('hide-details', !this.checked);
-    }});
+    });
 
-    document.getElementById('show-thinking').addEventListener('change', function() {{
+    document.getElementById('show-thinking').addEventListener('change', function() {
         document.getElementById('messages').classList.toggle('hide-thinking', !this.checked);
-    }});
+    });
 
     // Display token summary with cost
     const tokenEl = document.getElementById('token-summary');
@@ -1290,7 +1334,7 @@ function render(data) {{
     const cacheRead = data.total_cache_read_tokens || 0;
     const cacheCreate = data.total_cache_creation_tokens || 0;
 
-    if (input > 0 || output > 0) {{
+    if (input > 0 || output > 0) {
         const formatNum = n => n >= 1000 ? (n / 1000).toFixed(1) + 'K' : n.toString();
         const row1 = [formatNum(input) + ' in'];
         if (cacheRead > 0) row1.push(formatNum(cacheRead) + ' cache r');
@@ -1300,54 +1344,54 @@ function render(data) {{
         const row2 = [formatNum(output) + ' out'];
         const model = (data.models && data.models[0]) || '';
         const cost = calculateCost(model, input, output, cacheRead, cacheCreate);
-        if (cost !== null) {{
+        if (cost !== null) {
             row2.push('$' + (cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)));
-        }}
+        }
         document.getElementById('token-summary-2').textContent = row2.join(' · ');
-    }}
-}}
+    }
+}
 
 // Claude pricing (input/cache/output are SEPARATE categories)
-const CLAUDE_PRICING = {{
-    'claude-opus-4-5-20251101': {{ input: 5e-6, output: 25e-6, cacheRead: 0.5e-6, cacheCreate: 6.25e-6 }},
-    'claude-opus-4-5': {{ input: 5e-6, output: 25e-6, cacheRead: 0.5e-6, cacheCreate: 6.25e-6 }},
-    'claude-opus-4-20250514': {{ input: 15e-6, output: 75e-6, cacheRead: 1.5e-6, cacheCreate: 18.75e-6 }},
-    'claude-opus-4-1': {{ input: 15e-6, output: 75e-6, cacheRead: 1.5e-6, cacheCreate: 18.75e-6 }},
-    'claude-sonnet-4-5-20250929': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6, threshold: 200000, inputAbove: 6e-6, outputAbove: 22.5e-6, cacheReadAbove: 0.6e-6, cacheCreateAbove: 7.5e-6 }},
-    'claude-sonnet-4-5': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6, threshold: 200000, inputAbove: 6e-6, outputAbove: 22.5e-6, cacheReadAbove: 0.6e-6, cacheCreateAbove: 7.5e-6 }},
-    'claude-sonnet-4-20250514': {{ input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6, threshold: 200000, inputAbove: 6e-6, outputAbove: 22.5e-6, cacheReadAbove: 0.6e-6, cacheCreateAbove: 7.5e-6 }},
-    'claude-haiku-4-5-20251001': {{ input: 1e-6, output: 5e-6, cacheRead: 0.1e-6, cacheCreate: 1.25e-6 }},
-    'claude-haiku-4-5': {{ input: 1e-6, output: 5e-6, cacheRead: 0.1e-6, cacheCreate: 1.25e-6 }},
-}};
+const CLAUDE_PRICING = {
+    'claude-opus-4-5-20251101': { input: 5e-6, output: 25e-6, cacheRead: 0.5e-6, cacheCreate: 6.25e-6 },
+    'claude-opus-4-5': { input: 5e-6, output: 25e-6, cacheRead: 0.5e-6, cacheCreate: 6.25e-6 },
+    'claude-opus-4-20250514': { input: 15e-6, output: 75e-6, cacheRead: 1.5e-6, cacheCreate: 18.75e-6 },
+    'claude-opus-4-1': { input: 15e-6, output: 75e-6, cacheRead: 1.5e-6, cacheCreate: 18.75e-6 },
+    'claude-sonnet-4-5-20250929': { input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6, threshold: 200000, inputAbove: 6e-6, outputAbove: 22.5e-6, cacheReadAbove: 0.6e-6, cacheCreateAbove: 7.5e-6 },
+    'claude-sonnet-4-5': { input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6, threshold: 200000, inputAbove: 6e-6, outputAbove: 22.5e-6, cacheReadAbove: 0.6e-6, cacheCreateAbove: 7.5e-6 },
+    'claude-sonnet-4-20250514': { input: 3e-6, output: 15e-6, cacheRead: 0.3e-6, cacheCreate: 3.75e-6, threshold: 200000, inputAbove: 6e-6, outputAbove: 22.5e-6, cacheReadAbove: 0.6e-6, cacheCreateAbove: 7.5e-6 },
+    'claude-haiku-4-5-20251001': { input: 1e-6, output: 5e-6, cacheRead: 0.1e-6, cacheCreate: 1.25e-6 },
+    'claude-haiku-4-5': { input: 1e-6, output: 5e-6, cacheRead: 0.1e-6, cacheCreate: 1.25e-6 },
+};
 
 // Codex pricing (input INCLUDES cached, so we subtract)
-const CODEX_PRICING = {{
-    'gpt-5': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6 }},
-    'gpt-5-codex': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6 }},
-    'gpt-5.1': {{ input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6 }},
-    'gpt-5.2': {{ input: 1.75e-6, output: 14e-6, cacheRead: 0.175e-6 }},
-    'gpt-5.2-codex': {{ input: 1.75e-6, output: 14e-6, cacheRead: 0.175e-6 }},
-}};
+const CODEX_PRICING = {
+    'gpt-5': { input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6 },
+    'gpt-5-codex': { input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6 },
+    'gpt-5.1': { input: 1.25e-6, output: 10e-6, cacheRead: 0.125e-6 },
+    'gpt-5.2': { input: 1.75e-6, output: 14e-6, cacheRead: 0.175e-6 },
+    'gpt-5.2-codex': { input: 1.75e-6, output: 14e-6, cacheRead: 0.175e-6 },
+};
 
-function normalizeClaudeModel(model) {{
+function normalizeClaudeModel(model) {
     if (!model) return '';
     let m = model.toLowerCase().trim();
     m = m.replace(/^anthropic\./, '');
     // Handle format like "something.claude-opus-4-5"
     const lastDot = m.lastIndexOf('.');
-    if (lastDot !== -1 && m.includes('claude-')) {{
+    if (lastDot !== -1 && m.includes('claude-')) {
         const tail = m.slice(lastDot + 1);
         if (tail.startsWith('claude-')) m = tail;
-    }}
+    }
     m = m.replace(/-v\d+:\d+$/, ''); // strip -v1:0 suffix
     // Try with date suffix first, then without
     if (CLAUDE_PRICING[m]) return m;
-    const noDate = m.replace(/-\d{{8}}$/, '');
+    const noDate = m.replace(/-\d{8}$/, '');
     if (CLAUDE_PRICING[noDate]) return noDate;
     return m;
-}}
+}
 
-function normalizeCodexModel(model) {{
+function normalizeCodexModel(model) {
     if (!model) return '';
     let m = model.toLowerCase().trim();
     m = m.replace(/^openai\//, '');
@@ -1355,41 +1399,49 @@ function normalizeCodexModel(model) {{
     const noCodex = m.replace(/-codex$/, '');
     if (CODEX_PRICING[noCodex]) return noCodex;
     return m;
-}}
+}
 
-function tieredCost(tokens, base, above, threshold) {{
+function tieredCost(tokens, base, above, threshold) {
     if (!threshold || !above) return tokens * base;
     const below = Math.min(tokens, threshold);
     const over = Math.max(0, tokens - threshold);
     return below * base + over * above;
-}}
+}
 
-function calculateCost(model, input, output, cacheRead, cacheCreate) {{
+function calculateCost(model, input, output, cacheRead, cacheCreate) {
     // Try Claude pricing first
     const claudeKey = normalizeClaudeModel(model);
     const claudePricing = CLAUDE_PRICING[claudeKey];
-    if (claudePricing) {{
+    if (claudePricing) {
         // Claude: input_tokens is non-cached, all categories are additive
         const p = claudePricing;
         return tieredCost(input, p.input, p.inputAbove, p.threshold)
              + tieredCost(cacheRead, p.cacheRead, p.cacheReadAbove, p.threshold)
              + tieredCost(cacheCreate, p.cacheCreate, p.cacheCreateAbove, p.threshold)
              + tieredCost(output, p.output, p.outputAbove, p.threshold);
-    }}
+    }
 
     // Try Codex pricing
     const codexKey = normalizeCodexModel(model);
     const codexPricing = CODEX_PRICING[codexKey];
-    if (codexPricing) {{
+    if (codexPricing) {
         // Codex: input_tokens includes cached, so subtract
         const p = codexPricing;
         const cached = Math.min(cacheRead, input);
         const nonCached = Math.max(0, input - cached);
         return nonCached * p.input + cached * p.cacheRead + output * p.output;
-    }}
+    }
 
     return null;
-}}
+}
+"#;
+
+fn viewer_js(blob_id: &str) -> String {
+    format!(
+        r#"
+const BLOB_ID = "{blob_id}";
+
+{common}
 
 async function main() {{
     try {{
@@ -1453,6 +1505,108 @@ async function decompress(data) {{
 }}
 
 main();
-"#
+"#,
+        blob_id = blob_id,
+        common = VIEWER_JS_COMMON
+    )
+}
+
+fn gist_viewer_js() -> String {
+    format!(
+        r#"
+{common}
+
+// Gist-specific: Parse markdown transcript into data structure for rendering
+function parseMarkdownTranscript(text) {{
+    const data = {{ messages: [], tool: 'Claude Code', models: [] }};
+
+    // Extract title (first h1)
+    const titleMatch = text.match(/^# (.+)$/m);
+    if (titleMatch) data.title = titleMatch[1];
+
+    // Extract metadata line
+    const metaMatch = text.match(/^\*([^*]+)\*$/m);
+    if (metaMatch) {{
+        const parts = metaMatch[1].split(' · ');
+        if (parts.length > 0) data.tool = parts[0];
+        if (parts.length > 1) data.models = [parts[1]];
+        if (parts.length > 2) data.shared_at = parts[2];
+    }}
+
+    // Split by message headers (### emoji Role)
+    const msgRegex = /^### ([^\n]+)\n\n([\s\S]*?)(?=^### |^---|$)/gm;
+    let match;
+    while ((match = msgRegex.exec(text)) !== null) {{
+        const header = match[1];
+        let content = match[2].trim();
+
+        // Parse role from header
+        let role = 'assistant';
+        let model = null;
+        if (header.includes('User')) role = 'user';
+        else if (header.includes('Tool')) role = 'tool';
+        else if (header.includes('Thinking')) role = 'thinking';
+        else if (header.includes('System')) role = 'system';
+
+        // Extract model if present
+        const modelMatch = header.match(/\(([^)]+)\)/);
+        if (modelMatch) model = modelMatch[1];
+
+        // Handle details sections
+        let raw = null;
+        let rawLabel = null;
+        const detailsMatch = content.match(/<details>\s*<summary>([^<]+)<\/summary>\s*```json\s*([\s\S]*?)```\s*<\/details>/);
+        if (detailsMatch) {{
+            rawLabel = detailsMatch[1];
+            raw = detailsMatch[2].trim();
+            content = content.replace(detailsMatch[0], '').trim();
+        }}
+
+        data.messages.push({{ role, content, model, raw, raw_label: rawLabel }});
+    }}
+
+    // Extract token stats from footer
+    const statsMatch = text.match(/^\*Input: (\d+) tokens/m);
+    if (statsMatch) {{
+        const inputMatch = text.match(/Input: (\d+) tokens/);
+        const outputMatch = text.match(/Output: (\d+) tokens/);
+        const cacheReadMatch = text.match(/Cache read: (\d+) tokens/);
+        const cacheCreateMatch = text.match(/Cache write: (\d+) tokens/);
+        if (inputMatch) data.total_input_tokens = parseInt(inputMatch[1]);
+        if (outputMatch) data.total_output_tokens = parseInt(outputMatch[1]);
+        if (cacheReadMatch) data.total_cache_read_tokens = parseInt(cacheReadMatch[1]);
+        if (cacheCreateMatch) data.total_cache_creation_tokens = parseInt(cacheCreateMatch[1]);
+    }}
+
+    return data;
+}}
+
+// Main: wait for prefetch promise from <head>, then render
+async function main() {{
+    try {{
+        const content = await window.gistPromise;
+        const filename = window.gistFilename || '';
+        const isMarkdown = filename.endsWith('.md');
+
+        let data;
+        if (isMarkdown) {{
+            data = parseMarkdownTranscript(content);
+        }} else {{
+            data = JSON.parse(content);
+        }}
+
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('app').style.display = 'block';
+        render(data);
+    }} catch (err) {{
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error').style.display = 'flex';
+        document.getElementById('error-message').textContent = err.message;
+    }}
+}}
+
+main();
+"#,
+        common = VIEWER_JS_COMMON
     )
 }

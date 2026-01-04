@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use agentexport::{
     Config,
+    GistFormat,
     PublishOptions,
     StorageType,
     Tool,
@@ -97,7 +98,7 @@ enum ConfigAction {
     Show,
     /// Set a config value
     Set {
-        /// Key to set (default_ttl, storage_type, upload_url)
+        /// Key to set (default_ttl, storage_type, upload_url, gist_format)
         key: String,
         /// Value to set
         value: String,
@@ -136,6 +137,7 @@ fn run() -> Result<()> {
             let config = Config::load().unwrap_or_default();
             let effective_ttl = ttl.unwrap_or(config.default_ttl);
             let effective_storage_type = config.storage_type;
+            let effective_gist_format = config.gist_format;
             let effective_upload_url = if no_upload {
                 None
             } else if effective_storage_type == StorageType::Gist {
@@ -155,6 +157,7 @@ fn run() -> Result<()> {
                 render,
                 ttl_days: effective_ttl,
                 storage_type: effective_storage_type,
+                gist_format: effective_gist_format,
             })?;
 
             // When uploading, print just the share URL to stdout (for piping)
@@ -193,6 +196,7 @@ fn handle_config(action: Option<ConfigAction>) -> Result<()> {
             println!("default_ttl = {}", config.default_ttl);
             println!("storage_type = \"{}\"", config.storage_type);
             println!("upload_url = \"{}\"", config.upload_url);
+            println!("gist_format = \"{}\"", config.gist_format);
         }
         Some(ConfigAction::Set { key, value }) => {
             let mut config = Config::load().unwrap_or_default();
@@ -211,6 +215,9 @@ fn handle_config(action: Option<ConfigAction>) -> Result<()> {
                 }
                 "upload_url" | "url" => {
                     config.upload_url = value;
+                }
+                "gist_format" | "format" => {
+                    config.gist_format = GistFormat::parse(&value)?;
                 }
                 _ => {
                     anyhow::bail!("unknown config key: {key}");

@@ -19,7 +19,7 @@ mod setup;
 pub mod shares;
 mod upload;
 
-pub use config::{Config, StorageType};
+pub use config::{Config, GistFormat, StorageType};
 pub use setup::run as run_setup;
 
 const APP_NAME: &str = "agentexport";
@@ -73,6 +73,7 @@ pub struct PublishOptions {
     pub render: bool,
     pub ttl_days: u64,
     pub storage_type: StorageType,
+    pub gist_format: GistFormat,
 }
 
 #[derive(Debug, Serialize)]
@@ -1654,7 +1655,7 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
             options.tool.as_str(),
             format_generated_at_nice()
         );
-        let result = upload::upload_gist("gist", &json, &description)?;
+        let result = upload::upload_gist("gist", &json, &description, options.gist_format)?;
 
         // Save share locally for management
         let share_url = result.share_url.clone();
@@ -1906,6 +1907,7 @@ mod tests {
             render: true,
             ttl_days: 30,
             storage_type: StorageType::Agentexport,
+            gist_format: GistFormat::Markdown,
         })
         .unwrap();
 
@@ -1948,6 +1950,7 @@ mod tests {
             render: false,
             ttl_days: 30,
             storage_type: StorageType::Agentexport,
+            gist_format: GistFormat::Markdown,
         })
         .unwrap();
 
@@ -2001,6 +2004,7 @@ mod tests {
             render: false,
             ttl_days: 30,
             storage_type: StorageType::Agentexport,
+            gist_format: GistFormat::Markdown,
         })
         .unwrap();
 
@@ -2046,6 +2050,7 @@ mod tests {
             render: false,
             ttl_days: 30,
             storage_type: StorageType::Agentexport,
+            gist_format: GistFormat::Markdown,
         })
         .unwrap_err();
 

@@ -10,6 +10,39 @@ pub enum StorageType {
     Gist,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GistFormat {
+    Markdown,
+    Json,
+}
+
+impl GistFormat {
+    pub fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "markdown" | "md" => Ok(Self::Markdown),
+            "json" => Ok(Self::Json),
+            _ => bail!("invalid gist_format: must be markdown or json"),
+        }
+    }
+}
+
+impl Default for GistFormat {
+    fn default() -> Self {
+        GistFormat::Markdown
+    }
+}
+
+impl std::fmt::Display for GistFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            GistFormat::Markdown => "markdown",
+            GistFormat::Json => "json",
+        };
+        write!(f, "{value}")
+    }
+}
+
 impl StorageType {
     pub fn parse(value: &str) -> Result<Self> {
         match value.trim().to_lowercase().as_str() {
@@ -49,6 +82,10 @@ pub struct Config {
     /// Upload URL (default: https://agentexports.com)
     #[serde(default = "default_upload_url")]
     pub upload_url: String,
+
+    /// Format for gist storage (html or json)
+    #[serde(default = "default_gist_format")]
+    pub gist_format: GistFormat,
 }
 
 fn default_ttl() -> u64 {
@@ -61,6 +98,10 @@ fn default_upload_url() -> String {
 
 fn default_storage_type() -> StorageType {
     StorageType::Agentexport
+}
+
+fn default_gist_format() -> GistFormat {
+    GistFormat::Markdown
 }
 
 fn config_path() -> Result<PathBuf> {
@@ -97,6 +138,7 @@ impl Default for Config {
             default_ttl: default_ttl(),
             storage_type: default_storage_type(),
             upload_url: default_upload_url(),
+            gist_format: default_gist_format(),
         }
     }
 }
@@ -115,6 +157,7 @@ mod tests {
             default_ttl: 90,
             storage_type: StorageType::Gist,
             upload_url: "https://example.com".to_string(),
+            gist_format: GistFormat::Json,
         };
 
         let content = toml::to_string_pretty(&config).unwrap();
@@ -132,6 +175,7 @@ mod tests {
         assert_eq!(config.default_ttl, 30);
         assert_eq!(config.storage_type, StorageType::Agentexport);
         assert_eq!(config.upload_url, "https://agentexports.com");
+        assert_eq!(config.gist_format, GistFormat::Markdown);
     }
 
     #[test]
@@ -148,5 +192,21 @@ mod tests {
         let content = "storage_type = \"gist\"\n";
         let config: Config = toml::from_str(content).unwrap();
         assert_eq!(config.storage_type, StorageType::Gist);
+    }
+
+    #[test]
+    fn config_gist_format_parse() {
+        let content = "gist_format = \"json\"\n";
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.gist_format, GistFormat::Json);
+    }
+
+    #[test]
+    fn gist_format_parse_variants() {
+        assert_eq!(GistFormat::parse("markdown").unwrap(), GistFormat::Markdown);
+        assert_eq!(GistFormat::parse("md").unwrap(), GistFormat::Markdown);
+        assert_eq!(GistFormat::parse("json").unwrap(), GistFormat::Json);
+        assert_eq!(GistFormat::parse("MARKDOWN").unwrap(), GistFormat::Markdown);
+        assert!(GistFormat::parse("invalid").is_err());
     }
 }
