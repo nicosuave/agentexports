@@ -91,18 +91,18 @@ pub fn render_gist_markdown(payload_json: &str) -> Result<String> {
             let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let msg_model = msg.get("model").and_then(|v| v.as_str());
 
-            // Role header with emoji
-            let (emoji, role_display) = match role {
-                "user" => ("👤", "User"),
-                "assistant" => ("🤖", "Assistant"),
-                "tool" => ("🔧", "Tool"),
-                "thinking" => ("💭", "Thinking"),
-                "system" => ("⚙️", "System"),
-                _ => ("", role),
+            // Role header
+            let role_display = match role {
+                "user" => "User",
+                "assistant" => "Assistant",
+                "tool" => "Tool",
+                "thinking" => "Thinking",
+                "system" => "System",
+                _ => role,
             };
 
             let model_suffix = msg_model.map(|m| format!(" ({})", m)).unwrap_or_default();
-            md.push_str(&format!("### {} {}{}\n\n", emoji, role_display, model_suffix));
+            md.push_str(&format!("### {}{}\n\n", role_display, model_suffix));
 
             // Content - for tool messages, wrap in code block if not already
             if role == "tool" && !content.trim().starts_with("```") {

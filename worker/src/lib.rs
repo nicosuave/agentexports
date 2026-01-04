@@ -1533,7 +1533,7 @@ function parseMarkdownTranscript(text) {{
         if (parts.length > 2) data.shared_at = parts[2];
     }}
 
-    // Split by message headers (### emoji Role)
+    // Split by message headers (### Role)
     const msgRegex = /^### ([^\n]+)\n\n([\s\S]*?)(?=^### |^---|$)/gm;
     let match;
     while ((match = msgRegex.exec(text)) !== null) {{
