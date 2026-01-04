@@ -476,6 +476,86 @@ async fn fetch_r2_metrics(api_token: &str, account_id: &str) -> Option<String> {
     serde_json::to_string(&data).ok()
 }
 
+// Shared theme toggle script for both pages
+const THEME_SCRIPT: &str = r#"
+(function() {
+    function getPreferred() {
+        const stored = localStorage.getItem('theme');
+        if (stored === 'light' || stored === 'dark') return stored;
+        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    function apply(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        const btn = document.getElementById('theme-toggle');
+        if (btn) btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    }
+    apply(getPreferred());
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+        if (!localStorage.getItem('theme')) apply(e.matches ? 'dark' : 'light');
+    });
+    document.addEventListener('DOMContentLoaded', () => {
+        const btn = document.getElementById('theme-toggle');
+        if (btn) btn.addEventListener('click', () => {
+            const current = document.documentElement.getAttribute('data-theme') || getPreferred();
+            const next = current === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('theme', next);
+            apply(next);
+        });
+    });
+})();
+"#;
+
+// Theme toggle button SVG icons
+const THEME_TOGGLE_BUTTON: &str = r#"
+<button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="5"/>
+        <line x1="12" y1="1" x2="12" y2="3"/>
+        <line x1="12" y1="21" x2="12" y2="23"/>
+        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+        <line x1="1" y1="12" x2="3" y2="12"/>
+        <line x1="21" y1="12" x2="23" y2="12"/>
+        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+    </svg>
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+</button>
+"#;
+
+// Theme toggle CSS (shared)
+const THEME_TOGGLE_CSS: &str = r#"
+.theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: color 0.15s, border-color 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.theme-toggle:hover {
+    color: var(--text);
+    border-color: var(--text-secondary);
+}
+.theme-toggle svg {
+    width: 18px;
+    height: 18px;
+}
+.theme-toggle .icon-sun { display: none; }
+.theme-toggle .icon-moon { display: block; }
+[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+"#;
+
 fn homepage_html() -> String {
     let metrics_section = r##"
     <h2>Stats</h2>
@@ -547,8 +627,9 @@ fn homepage_html() -> String {
             ctx.stroke();
         }
 
-        drawLine(points.map(p => p.objects), '#0066cc');
-        drawLine(points.map(p => p.storage_bytes), '#888');
+        const style = getComputedStyle(document.documentElement);
+        drawLine(points.map(p => p.objects), style.getPropertyValue('--chart-primary').trim() || '#0066cc');
+        drawLine(points.map(p => p.storage_bytes), style.getPropertyValue('--chart-secondary').trim() || '#888');
 
         // Hover tooltip
         canvas.addEventListener('mousemove', e => {
@@ -572,15 +653,15 @@ fn homepage_html() -> String {
 "##;
     let metrics_css = r##"
         .metrics-container { margin: 0.5rem 0; position: relative; }
-        .metrics-loading { font-size: 13px; color: #999; }
+        .metrics-loading { font-size: 13px; color: var(--text-muted); }
         .metrics-chart { border-radius: 4px; padding: 8px 0; position: relative; }
         .metrics-chart canvas { display: block; width: 100%; height: auto; }
-        .metrics-tooltip { position: absolute; top: -24px; transform: translateX(-50%); background: #333; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
-        .metrics-axis { display: flex; justify-content: space-between; font-size: 11px; color: #999; padding: 0 8px; }
-        .metrics-legend { display: flex; gap: 1.5rem; margin-top: 0.5rem; font-size: 13px; color: #666; }
+        .metrics-tooltip { position: absolute; top: -24px; transform: translateX(-50%); background: var(--tooltip-bg); color: var(--tooltip-text); padding: 4px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+        .metrics-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); padding: 0 8px; }
+        .metrics-legend { display: flex; gap: 1.5rem; margin-top: 0.5rem; font-size: 13px; color: var(--text-secondary); }
         .legend-line { display: inline-block; width: 12px; height: 2px; margin-right: 6px; vertical-align: middle; }
-        .legend-line.objects { background: #0066cc; }
-        .legend-line.storage { background: #888; }
+        .legend-line.objects { background: var(--chart-primary); }
+        .legend-line.storage { background: var(--chart-secondary); }
 "##;
 
     format!(r##"<!DOCTYPE html>
@@ -599,27 +680,61 @@ fn homepage_html() -> String {
     <meta name="twitter:title" content="agentexport">
     <meta name="twitter:description" content="Share Claude Code and Codex transcripts. No signup required.">
     <meta name="twitter:image" content="https://agentexports.com/og/homepage.png">
+    <script>{theme_script}</script>
     <style>
+        :root {{
+            --bg: #fff;
+            --text: #111;
+            --text-secondary: #666;
+            --text-muted: #999;
+            --code-bg: #f4f4f4;
+            --code-bg-hover: #e8e8e8;
+            --border: #ddd;
+            --link: #0066cc;
+            --chart-primary: #0066cc;
+            --chart-secondary: #888;
+            --tooltip-bg: #333;
+            --tooltip-text: #fff;
+            --success: #22863a;
+        }}
+        [data-theme="dark"] {{
+            --bg: #0d1117;
+            --text: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #6e7681;
+            --code-bg: #161b22;
+            --code-bg-hover: #21262d;
+            --border: #30363d;
+            --link: #58a6ff;
+            --chart-primary: #58a6ff;
+            --chart-secondary: #6e7681;
+            --tooltip-bg: #1f2428;
+            --tooltip-text: #e6edf3;
+            --success: #3fb950;
+        }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             max-width: 720px;
             margin: 0 auto;
             padding: 48px 24px;
             line-height: 1.6;
+            background: var(--bg);
+            color: var(--text);
+            transition: background 0.15s, color 0.15s;
         }}
         header {{ display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.25rem; }}
         h1 {{ margin: 0; }}
-        header a {{ color: #666; font-size: 0.9rem; }}
-        .tagline {{ color: #666; margin-bottom: 2rem; }}
-        h2 {{ font-size: 1rem; margin-top: 2rem; color: #333; }}
+        header a {{ color: var(--text-secondary); font-size: 0.9rem; }}
+        .tagline {{ color: var(--text-secondary); margin-bottom: 2rem; }}
+        h2 {{ font-size: 1rem; margin-top: 2rem; color: var(--text); }}
         p {{ margin: 0.5rem 0; }}
-        code {{ background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }}
-        a {{ color: #0066cc; }}
+        code {{ background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }}
+        a {{ color: var(--link); }}
         .install-box {{
             position: relative;
             display: flex;
             align-items: center;
-            background: #f4f4f4;
+            background: var(--code-bg);
             border-radius: 4px;
             padding: 0.75rem 1rem;
             margin: 0.5rem 0;
@@ -627,7 +742,7 @@ fn homepage_html() -> String {
             cursor: pointer;
             transition: background 0.15s;
         }}
-        .install-box:hover {{ background: #e8e8e8; }}
+        .install-box:hover {{ background: var(--code-bg-hover); }}
         .install-box code {{
             flex: 1;
             background: none;
@@ -644,8 +759,8 @@ fn homepage_html() -> String {
             position: absolute;
             right: 0;
             top: -32px;
-            background: #333;
-            color: white;
+            background: var(--tooltip-bg);
+            color: var(--tooltip-text);
             padding: 4px 10px;
             border-radius: 4px;
             font-size: 12px;
@@ -656,10 +771,11 @@ fn homepage_html() -> String {
             transition: opacity 0.15s;
         }}
         .install-box:hover .tooltip {{ opacity: 1; }}
-        .tooltip.copied {{ background: #22863a; }}{metrics_css}
+        .tooltip.copied {{ background: var(--success); }}{metrics_css}{theme_toggle_css}
     </style>
 </head>
 <body>
+    {theme_toggle_button}
     <header>
         <h1>agentexport</h1>
         <a href="/v/nbc6b43907ec5c0f3#EzyQxZQA3hJnwoO7rzJYym0kjIArv4DuPh2asptdEPM">Demo</a>
@@ -711,7 +827,7 @@ fn homepage_html() -> String {
 {metrics_section}
 </body>
 </html>
-"##, metrics_section = metrics_section, metrics_css = metrics_css)
+"##, metrics_section = metrics_section, metrics_css = metrics_css, theme_script = THEME_SCRIPT, theme_toggle_css = THEME_TOGGLE_CSS, theme_toggle_button = THEME_TOGGLE_BUTTON)
 }
 
 fn setup_script() -> String {
@@ -795,9 +911,11 @@ fn viewer_html(blob_id: &str) -> String {
                 meta name="twitter:title" content="Shared Transcript";
                 meta name="twitter:description" content="View a shared Claude Code or Codex session transcript.";
                 meta name="twitter:image" content="https://agentexports.com/og/viewer.png";
+                script { (PreEscaped(THEME_SCRIPT)) }
                 style { (PreEscaped(VIEWER_CSS)) }
             }
             body {
+                (PreEscaped(THEME_TOGGLE_BUTTON))
                 div #loading class="loading" {
                     div class="spinner" {}
                     p { "Decrypting..." }
@@ -846,15 +964,48 @@ fn viewer_html(blob_id: &str) -> String {
 }
 
 const VIEWER_CSS: &str = r#"
+:root {
+    --bg: #fff;
+    --text: #111;
+    --text-secondary: #666;
+    --text-muted: #999;
+    --code-bg: #f5f5f5;
+    --border: #ddd;
+    --link: #0066cc;
+    --spinner-track: #eee;
+    --spinner-head: #333;
+    --error: #c00;
+    --thinking-role: #7c3aed;
+    --thinking-border: #c4b5fd;
+    --thinking-bg: #faf5ff;
+    --thinking-text: #444;
+}
+[data-theme="dark"] {
+    --bg: #0d1117;
+    --text: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-muted: #6e7681;
+    --code-bg: #161b22;
+    --border: #30363d;
+    --link: #58a6ff;
+    --spinner-track: #30363d;
+    --spinner-head: #e6edf3;
+    --error: #f85149;
+    --thinking-role: #a78bfa;
+    --thinking-border: #6d28d9;
+    --thinking-bg: #1e1b2e;
+    --thinking-text: #c4b5fd;
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #fff;
-    color: #111;
+    background: var(--bg);
+    color: var(--text);
     line-height: 1.6;
     max-width: 720px;
     margin: 0 auto;
     padding: 48px 24px;
+    transition: background 0.15s, color 0.15s;
 }
 .loading, .error {
     display: flex;
@@ -866,63 +1017,90 @@ body {
 }
 .spinner {
     width: 32px; height: 32px;
-    border: 3px solid #eee;
-    border-top-color: #333;
+    border: 3px solid var(--spinner-track);
+    border-top-color: var(--spinner-head);
     border-radius: 50%;
     animation: spin 1s linear infinite;
     margin-bottom: 1rem;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.error { color: #c00; }
+.error { color: var(--error); }
 .error h2 { margin-bottom: 0.5rem; }
 header { margin-bottom: 32px; }
 .title-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
 .title-left { display: flex; align-items: baseline; gap: 12px; }
 h1 { font-size: 18px; font-weight: 600; }
-.model { font-size: 13px; color: #666; font-family: ui-monospace, monospace; }
-.date { font-size: 13px; color: #666; }
+.model { font-size: 13px; color: var(--text-secondary); font-family: ui-monospace, monospace; }
+.date { font-size: 13px; color: var(--text-secondary); }
 .meta-row { display: flex; justify-content: space-between; align-items: flex-start; margin-top: 8px; }
 .token-col { display: flex; flex-direction: column; gap: 2px; }
-.toggles { font-size: 13px; color: #666; display: flex; flex-direction: column; gap: 4px; white-space: nowrap; flex-shrink: 0; }
+.toggles { font-size: 13px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 4px; white-space: nowrap; flex-shrink: 0; }
 .toggles label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
-.token-summary { font-size: 13px; color: #666; font-family: ui-monospace, monospace; }
+.token-summary { font-size: 13px; color: var(--text-secondary); font-family: ui-monospace, monospace; }
 .token-summary:empty { display: none; }
 .command { display: flex; align-items: center; gap: 8px; }
-.command-label { font-size: 11px; text-transform: uppercase; color: #999; font-weight: 500; }
-.command-name { font-family: ui-monospace, monospace; font-size: 14px; color: #0066cc; }
+.command-label { font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 500; }
+.command-name { font-family: ui-monospace, monospace; font-size: 14px; color: var(--link); }
 .messages { margin-top: 24px; }
 .msg { padding: 16px 0; }
 .msg-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
-.msg-role { font-size: 12px; font-weight: 600; text-transform: uppercase; color: #666; }
-.msg-role.user { color: #0066cc; }
-.msg-role.assistant { color: #1a1a1a; }
-.msg-model { font-size: 11px; color: #999; font-family: ui-monospace, monospace; }
+.msg-role { font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); }
+.msg-role.user { color: var(--link); }
+.msg-role.assistant { color: var(--text); }
+.msg-model { font-size: 11px; color: var(--text-muted); font-family: ui-monospace, monospace; }
 .msg-content { font-size: 15px; }
 .msg-content p { margin: 0.5em 0; }
 .msg-content p:first-child { margin-top: 0; }
-.msg-content code { background: #f5f5f5; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
-.msg-content pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
+.msg-content code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+.msg-content pre { background: var(--code-bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
 .msg-content pre code { background: none; padding: 0; }
 .msg-content ul, .msg-content ol { margin: 0.5em 0 0.5em 1.5em; padding: 0; }
 .msg-content li { margin: 0.25em 0; }
 .msg-content h1, .msg-content h2, .msg-content h3 { margin: 1em 0 0.5em; font-size: 1.1em; }
 .msg-content table { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
-.msg-content th, .msg-content td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
-.msg-content th { background: #f5f5f5; font-weight: 600; }
+.msg-content th, .msg-content td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+.msg-content th { background: var(--code-bg); font-weight: 600; }
 .msg.tool, .msg.system { opacity: 0.7; }
 .msg.tool .msg-content { font-family: ui-monospace, monospace; font-size: 13px; white-space: pre-wrap; }
-.msg.system .msg-content { font-size: 13px; color: #666; border-left: 3px solid #ddd; padding-left: 12px; }
+.msg.system .msg-content { font-size: 13px; color: var(--text-secondary); border-left: 3px solid var(--border); padding-left: 12px; }
 .msg.thinking { opacity: 0.85; }
-.msg.thinking .msg-role { color: #7c3aed; }
-.msg.thinking .msg-content { font-size: 14px; color: #444; border-left: 3px solid #c4b5fd; padding-left: 12px; background: #faf5ff; margin-left: -12px; padding: 12px; border-radius: 0 6px 6px 0; }
+.msg.thinking .msg-role { color: var(--thinking-role); }
+.msg.thinking .msg-content { font-size: 14px; color: var(--thinking-text); border-left: 3px solid var(--thinking-border); padding-left: 12px; background: var(--thinking-bg); margin-left: -12px; padding: 12px; border-radius: 0 6px 6px 0; }
 .hide-details .msg.tool, .hide-details .msg.system { display: none; }
 .hide-thinking .msg.thinking { display: none; }
 .raw { margin-top: 8px; }
-.raw summary { font-size: 12px; color: #666; cursor: pointer; }
-.raw pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 8px; max-height: 300px; }
-footer { margin-top: 48px; font-size: 14px; color: #999; text-align: center; }
-footer a { color: #999; text-decoration: none; }
+.raw summary { font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.raw pre { background: var(--code-bg); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 8px; max-height: 300px; }
+footer { margin-top: 48px; font-size: 14px; color: var(--text-muted); text-align: center; }
+footer a { color: var(--text-muted); text-decoration: none; }
 footer a:hover { text-decoration: underline; }
+.theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: color 0.15s, border-color 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.theme-toggle:hover {
+    color: var(--text);
+    border-color: var(--text-secondary);
+}
+.theme-toggle svg {
+    width: 18px;
+    height: 18px;
+}
+.theme-toggle .icon-sun { display: none; }
+.theme-toggle .icon-moon { display: block; }
+[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
 "#;
 
 fn viewer_js(blob_id: &str) -> String {
