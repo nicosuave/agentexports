@@ -36,7 +36,7 @@ pub fn encrypt_html(html: &str) -> Result<EncryptionResult> {
 
     let ciphertext = cipher
         .encrypt(nonce, compressed.as_slice())
-        .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Encryption failed: {e}"))?;
 
     // Combine IV + ciphertext
     let mut blob = Vec::with_capacity(12 + ciphertext.len());
