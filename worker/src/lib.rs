@@ -859,6 +859,7 @@ fn homepage_html() -> String {
 
     <h2>Self-hosting</h2>
     <p>You can deploy your own instance using Cloudflare Workers and R2. See the <a href="https://github.com/nicosuave/agentexport#self-hosting">README</a> for instructions, then run <code>agentexport config set upload_url https://your-domain.com</code>.</p>
+    <p>Alternatively, store transcripts as GitHub Gists with <code>agentexport config set backend gist</code>.</p>
 {metrics_section}
 </body>
 </html>
