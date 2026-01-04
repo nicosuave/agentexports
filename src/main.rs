@@ -42,7 +42,7 @@ enum Commands {
         out: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
-        /// Upload URL (default from ~/.agentexport or https://agentexports.com)
+        /// Upload URL (default from ~/.agentexport/config.toml or https://agentexports.com)
         #[arg(long)]
         upload_url: Option<String>,
         /// Skip uploading to server
@@ -50,7 +50,7 @@ enum Commands {
         no_upload: bool,
         #[arg(long)]
         render: bool,
-        /// TTL for the share: 30, 60, 90, 180, 365, or 0 for forever (default from ~/.agentexport or 30)
+        /// TTL for the share: 30, 60, 90, 180, 365, or 0 for forever (default from ~/.agentexport/config.toml or 30)
         #[arg(long)]
         ttl: Option<u64>,
     },
@@ -64,7 +64,7 @@ enum Commands {
         action: Option<SharesAction>,
     },
 
-    /// View or modify config (~/.agentexport)
+    /// View or modify config (~/.agentexport/config.toml)
     #[command(name = "config")]
     Config {
         #[command(subcommand)]

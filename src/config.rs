@@ -65,11 +65,11 @@ fn default_storage_type() -> StorageType {
 
 fn config_path() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home).join(".agentexport"))
+    Ok(PathBuf::from(home).join(".agentexport").join("config.toml"))
 }
 
 impl Config {
-    /// Load config from ~/.agentexport, returning defaults if file doesn't exist
+    /// Load config from ~/.agentexport/config.toml, returning defaults if file doesn't exist
     pub fn load() -> Result<Self> {
         let path = config_path()?;
         if !path.exists() {
@@ -82,7 +82,7 @@ impl Config {
         Ok(config)
     }
 
-    /// Save config to ~/.agentexport
+    /// Save config to ~/.agentexport/config.toml
     pub fn save(&self) -> Result<PathBuf> {
         let path = config_path()?;
         let content = toml::to_string_pretty(self).context("failed to serialize config")?;
