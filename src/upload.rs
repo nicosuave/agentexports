@@ -10,6 +10,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::tempdir;
 
+use crate::config::GistFormat;
+
 #[derive(Deserialize)]
 struct UploadResponse {
     id: String,
@@ -42,14 +44,130 @@ fn far_future_expires_at() -> u64 {
     now.saturating_add(60 * 60 * 24 * 365 * 100)
 }
 
-pub fn upload_gist(upload_url: &str, payload_json: &str, description: &str) -> Result<UploadResult> {
+/// Render payload JSON into a markdown document for GitHub Gist
+pub fn render_gist_markdown(payload_json: &str) -> Result<String> {
+    let payload: serde_json::Value = serde_json::from_str(payload_json)
+        .context("Failed to parse payload JSON")?;
+
+    let mut md = String::new();
+
+    // Title
+    let title = payload.get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Agent Export");
+    md.push_str(&format!("# {}\n\n", title));
+
+    // Metadata
+    let tool = payload.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+    let model = payload.get("model").and_then(|v| v.as_str());
+    let models = payload.get("models").and_then(|v| v.as_array());
+    let shared_at = payload.get("shared_at").and_then(|v| v.as_str()).unwrap_or("");
+
+    let model_str = if let Some(m) = model {
+        m.to_string()
+    } else if let Some(ms) = models {
+        ms.iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" + ")
+    } else {
+        String::new()
+    };
+
+    if !tool.is_empty() || !model_str.is_empty() || !shared_at.is_empty() {
+        let mut meta_parts = Vec::new();
+        if !tool.is_empty() { meta_parts.push(tool.to_string()); }
+        if !model_str.is_empty() { meta_parts.push(model_str); }
+        if !shared_at.is_empty() { meta_parts.push(shared_at.to_string()); }
+        md.push_str(&format!("*{}*\n\n", meta_parts.join(" · ")));
+    }
+
+    md.push_str("---\n\n");
+
+    // Messages
+    if let Some(messages) = payload.get("messages").and_then(|v| v.as_array()) {
+        for msg in messages {
+            let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("assistant");
+            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let msg_model = msg.get("model").and_then(|v| v.as_str());
+
+            // Role header with emoji
+            let (emoji, role_display) = match role {
+                "user" => ("👤", "User"),
+                "assistant" => ("🤖", "Assistant"),
+                "tool" => ("🔧", "Tool"),
+                "thinking" => ("💭", "Thinking"),
+                "system" => ("⚙️", "System"),
+                _ => ("", role),
+            };
+
+            let model_suffix = msg_model.map(|m| format!(" ({})", m)).unwrap_or_default();
+            md.push_str(&format!("### {} {}{}\n\n", emoji, role_display, model_suffix));
+
+            // Content - for tool messages, wrap in code block if not already
+            if role == "tool" && !content.trim().starts_with("```") {
+                // Check if it looks like JSON or code
+                let trimmed = content.trim();
+                if trimmed.starts_with('{') || trimmed.starts_with('[') || trimmed.contains('\n') {
+                    md.push_str("```\n");
+                    md.push_str(content);
+                    if !content.ends_with('\n') { md.push('\n'); }
+                    md.push_str("```\n\n");
+                } else {
+                    md.push_str(&format!("`{}`\n\n", content));
+                }
+            } else {
+                md.push_str(content);
+                if !content.ends_with('\n') { md.push('\n'); }
+                md.push('\n');
+            }
+
+            // Raw/details section (collapsed)
+            if let Some(raw) = msg.get("raw").and_then(|v| v.as_str()) {
+                let label = msg.get("raw_label").and_then(|v| v.as_str()).unwrap_or("Details");
+                md.push_str(&format!("<details>\n<summary>{}</summary>\n\n```json\n{}\n```\n\n</details>\n\n", label, raw));
+            }
+        }
+    }
+
+    // Token stats
+    let input_tokens = payload.get("total_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let output_tokens = payload.get("total_output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let cache_read = payload.get("total_cache_read_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let cache_write = payload.get("total_cache_creation_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    if input_tokens > 0 || output_tokens > 0 {
+        md.push_str("---\n\n");
+        let mut stats = Vec::new();
+        if input_tokens > 0 { stats.push(format!("Input: {} tokens", input_tokens)); }
+        if output_tokens > 0 { stats.push(format!("Output: {} tokens", output_tokens)); }
+        if cache_read > 0 { stats.push(format!("Cache read: {} tokens", cache_read)); }
+        if cache_write > 0 { stats.push(format!("Cache write: {} tokens", cache_write)); }
+        md.push_str(&format!("*{}*\n", stats.join(" · ")));
+    }
+
+    Ok(md)
+}
+
+pub fn upload_gist(upload_url: &str, payload_json: &str, description: &str, format: GistFormat) -> Result<UploadResult> {
     ensure_gh_ready()?;
+
+    let (filename, content) = match format {
+        GistFormat::Markdown => {
+            let md = render_gist_markdown(payload_json)?;
+            ("transcript.md".to_string(), md)
+        }
+        GistFormat::Json => {
+            ("agentexport.json".to_string(), payload_json.to_string())
+        }
+    };
+
     let body = serde_json::json!({
         "public": false,
         "description": description,
         "files": {
-            "agentexport.json": {
-                "content": payload_json
+            filename: {
+                "content": content
             }
         }
     });
@@ -76,16 +194,15 @@ pub fn upload_gist(upload_url: &str, payload_json: &str, description: &str) -> R
         .get("id")
         .and_then(|v| v.as_str())
         .context("Missing id in gist response")?;
-    let share_url = response
-        .get("html_url")
-        .and_then(|v| v.as_str())
-        .context("Missing html_url in gist response")?;
+
+    // Return agentexports.com URL that will proxy and render the gist
+    let share_url = format!("https://agentexports.com/g/{}", id);
 
     Ok(UploadResult {
         id: id.to_string(),
         key: String::new(),
         delete_token: String::new(),
-        share_url: share_url.to_string(),
+        share_url,
         upload_url: upload_url.to_string(),
         expires_at: far_future_expires_at(),
     })
