@@ -105,7 +105,7 @@ gh auth login
 agentexport config set storage_type gist
 ```
 
-Gists are created as secret (unlisted) by default. Gists are not encrypted and do not expire. The TTL setting is ignored. `upload_url` is ignored for the gist backend.
+Gists are created as secret (unlisted) by default. Gists are not encrypted and do not expire. The TTL setting is ignored. `upload_url` is ignored for the gist backend. The default storage type is `agentexport` (set `storage_type` to `agentexport` to switch back).
 
 ## Self-Hosting
 
