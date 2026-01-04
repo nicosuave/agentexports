@@ -815,6 +815,12 @@ fn homepage_html() -> String {
     <h2>Install</h2>
     <div class="install-box" onclick="copyCmd(this)">
         <span class="tooltip">Click to copy</span>
+        <code>brew install nicosuave/tap/agentexport</code>
+        <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+    </div>
+    <p style="font-size: 13px; color: var(--text-muted); margin: 0.5rem 0;">or without Homebrew:</p>
+    <div class="install-box" onclick="copyCmd(this)">
+        <span class="tooltip">Click to copy</span>
         <code>curl -fsSL https://agentexports.com/setup | sh</code>
         <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
     </div>
