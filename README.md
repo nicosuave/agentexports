@@ -13,6 +13,12 @@ Share Claude Code and Codex session transcripts with end-to-end encryption.
 ## Installation
 
 ```bash
+brew install nicosuave/tap/agentexport
+```
+
+Or
+
+```bash
 curl -fsSL https://agentexports.com/setup | sh
 ```
 
