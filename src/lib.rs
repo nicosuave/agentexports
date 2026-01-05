@@ -112,8 +112,6 @@ pub struct RenderedMessage {
 struct TranscriptMeta {
     slug: Option<String>,
     first_user_message: Option<String>,
-    /// Compaction summary (from Claude's summary events, NOT a title)
-    compaction_summary: Option<String>,
 }
 
 /// Payload sent to the viewer (encrypted JSON)
@@ -124,9 +122,6 @@ pub struct SharePayload {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Compaction summary from Claude (displayed in conversation, NOT as title)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub compaction_summary: Option<String>,
     pub shared_at: String,
     /// Primary model (most used), shown in header
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -850,15 +845,6 @@ fn extract_transcript_meta(path: &Path) -> TranscriptMeta {
             Err(_) => continue,
         };
 
-        // Claude: extract compaction summary (NOT for title, just for display)
-        if meta.compaction_summary.is_none() {
-            if value.get("type").and_then(|v| v.as_str()) == Some("summary") {
-                if let Some(summary) = value.get("summary").and_then(|v| v.as_str()) {
-                    meta.compaction_summary = Some(summary.to_string());
-                }
-            }
-        }
-
         // Claude: look for slug field on user messages
         if meta.slug.is_none() {
             if let Some(slug) = value.get("slug").and_then(|v| v.as_str()) {
@@ -892,7 +878,7 @@ fn extract_transcript_meta(path: &Path) -> TranscriptMeta {
         }
 
         // Stop early if we have what we need
-        if meta.compaction_summary.is_some() && meta.first_user_message.is_some() {
+        if meta.slug.is_some() && meta.first_user_message.is_some() {
             break;
         }
     }
@@ -1014,10 +1000,22 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
         }
 
         // Skip internal events (but process event_msg in Codex mode for token usage)
-        if matches!(
-            event_type,
-            "file-history-snapshot" | "summary" | "queue-operation"
-        ) {
+        if matches!(event_type, "file-history-snapshot" | "queue-operation") {
+            continue;
+        }
+
+        // Claude: render compaction summary as a system message in natural order
+        if event_type == "summary" {
+            if let Some(summary) = value.get("summary").and_then(|v| v.as_str()) {
+                result.messages.push(RenderedMessage {
+                    role: "system".to_string(),
+                    content: format!("**Session Summary:** {}", summary),
+                    raw: None,
+                    raw_label: None,
+                    tool_use_id: None,
+                    model: None,
+                });
+            }
             continue;
         }
         if event_type == "event_msg" && !codex_mode {
@@ -1417,7 +1415,6 @@ fn create_share_payload(
         tool: tool_display.to_string(),
         session_id: session_id.or(thread_id).map(|s| s.to_string()),
         title,
-        compaction_summary: meta.compaction_summary,
         shared_at: format_generated_at_nice(),
         model: parsed.dominant_model(),
         models,

@@ -92,11 +92,6 @@ pub fn render_gist_markdown(payload_json: &str) -> Result<String> {
         md.push_str(&format!("*{}*\n\n", meta_parts.join(" · ")));
     }
 
-    // Compaction summary (if present)
-    if let Some(summary) = payload.get("compaction_summary").and_then(|v| v.as_str()) {
-        md.push_str(&format!("> **Session Summary:** {}\n\n", summary));
-    }
-
     md.push_str("---\n\n");
 
     // Messages
