@@ -14,15 +14,15 @@ Share Claude Code and Codex session transcripts with zero-knowledge encryption.
 curl -fsSL https://agentexports.com/setup | sh
 ```
 
-Then run setup to install skills and hooks:
+Then run setup to install skills:
 
 ```bash
 agentexport setup-skills
 ```
 
 This will:
-- **Claude Code**: Install the `/agentexport` skill and a SessionStart hook
-- **Codex**: Install the publish prompt
+- **Claude Code**: Install the `/agentexport` skill
+- **Codex**: Install the `/agentexport` prompt
 
 Restart Claude/Codex after setup.
 

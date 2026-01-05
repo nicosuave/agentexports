@@ -48,7 +48,7 @@ pub fn upload_blob(
     if response.status() >= 400 {
         let status = response.status();
         let body = response.into_string().unwrap_or_default();
-        bail!("Upload failed: {} - {}", status, body);
+        bail!("Upload failed: {status} - {body}");
     }
 
     let upload_response: UploadResponse = response
@@ -81,7 +81,7 @@ pub fn delete_blob(upload_url: &str, id: &str, delete_token: &str) -> Result<()>
     if response.status() >= 400 {
         let status = response.status();
         let body = response.into_string().unwrap_or_default();
-        bail!("Delete failed: {} - {}", status, body);
+        bail!("Delete failed: {status} - {body}");
     }
 
     Ok(())

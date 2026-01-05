@@ -33,7 +33,7 @@ fn test_e2e_roundtrip() {
     println!("Key (base64url): {}", encrypted.key_b64);
 
     // Upload to worker
-    let upload_url = format!("{}/upload", worker_url);
+    let upload_url = format!("{worker_url}/upload");
     let delete_token = generate_delete_token();
     let response = ureq::post(&upload_url)
         .set("Content-Type", "application/octet-stream")
@@ -50,10 +50,10 @@ fn test_e2e_roundtrip() {
     let upload_response: serde_json::Value = response.into_json().expect("parse response");
     let id = upload_response["id"].as_str().expect("missing id");
 
-    println!("Uploaded with ID: {}", id);
+    println!("Uploaded with ID: {id}");
 
     // Fetch blob back
-    let blob_url = format!("{}/blob/{}", worker_url, id);
+    let blob_url = format!("{worker_url}/blob/{id}");
     let response = ureq::get(&blob_url).call().expect("fetch blob failed");
 
     assert_eq!(response.status(), 200);
@@ -96,7 +96,7 @@ fn test_viewer_page_served() {
     let encrypted = encrypt_html(test_html).unwrap();
     let delete_token = generate_delete_token();
 
-    let response = ureq::post(&format!("{}/upload", worker_url))
+    let response = ureq::post(&format!("{worker_url}/upload"))
         .set("Content-Type", "application/octet-stream")
         .set("X-Delete-Token", &delete_token)
         .send_bytes(&encrypted.blob)
@@ -106,7 +106,7 @@ fn test_viewer_page_served() {
     let id = upload_response["id"].as_str().unwrap();
 
     // Fetch viewer page
-    let viewer_url = format!("{}/v/{}", worker_url, id);
+    let viewer_url = format!("{worker_url}/v/{id}");
     let response = ureq::get(&viewer_url).call().unwrap();
 
     assert_eq!(response.status(), 200);
@@ -127,11 +127,11 @@ fn test_blob_not_found() {
         std::env::var("WORKER_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
 
     // ID format: g (TTL prefix) + 16 hex chars = 17 chars total
-    let response = ureq::get(&format!("{}/blob/g0000000000000000", worker_url)).call();
+    let response = ureq::get(&format!("{worker_url}/blob/g0000000000000000")).call();
 
     match response {
         Err(ureq::Error::Status(404, _)) => println!("✓ 404 test PASSED!"),
-        other => panic!("Expected 404, got {:?}", other),
+        other => panic!("Expected 404, got {other:?}"),
     }
 }
 
@@ -147,7 +147,7 @@ fn test_delete_with_token() {
     let encrypted = encrypt_html(test_html).unwrap();
     let delete_token = generate_delete_token();
 
-    let response = ureq::post(&format!("{}/upload", worker_url))
+    let response = ureq::post(&format!("{worker_url}/upload"))
         .set("Content-Type", "application/octet-stream")
         .set("X-Delete-Token", &delete_token)
         .send_bytes(&encrypted.blob)
@@ -155,24 +155,24 @@ fn test_delete_with_token() {
 
     let upload_response: serde_json::Value = response.into_json().unwrap();
     let id = upload_response["id"].as_str().unwrap();
-    println!("Uploaded blob with ID: {}", id);
+    println!("Uploaded blob with ID: {id}");
 
     // Verify blob exists
-    let response = ureq::get(&format!("{}/blob/{}", worker_url, id)).call();
+    let response = ureq::get(&format!("{worker_url}/blob/{id}")).call();
     assert!(response.is_ok(), "Blob should exist");
 
     // Try to delete with wrong token - should fail
     let wrong_token = "0".repeat(64);
-    let response = ureq::delete(&format!("{}/blob/{}", worker_url, id))
+    let response = ureq::delete(&format!("{worker_url}/blob/{id}"))
         .set("X-Delete-Token", &wrong_token)
         .call();
     match response {
         Err(ureq::Error::Status(401, _)) => println!("Correctly rejected wrong token"),
-        other => panic!("Expected 401 for wrong token, got {:?}", other),
+        other => panic!("Expected 401 for wrong token, got {other:?}"),
     }
 
     // Delete with correct token - should succeed
-    let response = ureq::delete(&format!("{}/blob/{}", worker_url, id))
+    let response = ureq::delete(&format!("{worker_url}/blob/{id}"))
         .set("X-Delete-Token", &delete_token)
         .call()
         .expect("delete should succeed");
@@ -180,10 +180,10 @@ fn test_delete_with_token() {
     println!("Delete succeeded");
 
     // Verify blob is gone
-    let response = ureq::get(&format!("{}/blob/{}", worker_url, id)).call();
+    let response = ureq::get(&format!("{worker_url}/blob/{id}")).call();
     match response {
         Err(ureq::Error::Status(404, _)) => println!("Blob correctly deleted"),
-        other => panic!("Expected 404 after delete, got {:?}", other),
+        other => panic!("Expected 404 after delete, got {other:?}"),
     }
 
     println!("✓ Delete test PASSED!");
@@ -201,7 +201,7 @@ fn test_delete_requires_token() {
     let encrypted = encrypt_html(test_html).unwrap();
     let delete_token = generate_delete_token();
 
-    let response = ureq::post(&format!("{}/upload", worker_url))
+    let response = ureq::post(&format!("{worker_url}/upload"))
         .set("Content-Type", "application/octet-stream")
         .set("X-Delete-Token", &delete_token)
         .send_bytes(&encrypted.blob)
@@ -211,10 +211,10 @@ fn test_delete_requires_token() {
     let id = upload_response["id"].as_str().unwrap();
 
     // Try to delete without token - should fail
-    let response = ureq::delete(&format!("{}/blob/{}", worker_url, id)).call();
+    let response = ureq::delete(&format!("{worker_url}/blob/{id}")).call();
     match response {
         Err(ureq::Error::Status(401, _)) => println!("✓ Delete auth test PASSED!"),
-        other => panic!("Expected 401, got {:?}", other),
+        other => panic!("Expected 401, got {other:?}"),
     }
 }
 
@@ -245,7 +245,7 @@ fn encrypt_html(html: &str) -> Result<EncryptionResult, Box<dyn std::error::Erro
     let nonce = Nonce::from_slice(&iv_bytes);
     let ciphertext = cipher
         .encrypt(nonce, compressed.as_slice())
-        .map_err(|e| format!("encryption failed: {}", e))?;
+        .map_err(|e| format!("encryption failed: {e}"))?;
 
     // Combine IV + ciphertext
     let mut blob = Vec::with_capacity(12 + ciphertext.len());
@@ -268,7 +268,7 @@ fn decrypt_blob(blob: &[u8], key_b64: &str) -> Result<String, Box<dyn std::error
     let nonce = Nonce::from_slice(iv);
     let compressed = cipher
         .decrypt(nonce, ciphertext)
-        .map_err(|e| format!("decryption failed: {}", e))?;
+        .map_err(|e| format!("decryption failed: {e}"))?;
 
     let mut decoder = GzDecoder::new(&compressed[..]);
     let mut html = String::new();
