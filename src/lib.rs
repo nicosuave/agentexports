@@ -177,6 +177,97 @@ pub fn codex_sessions_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".codex").join("sessions"))
 }
 
+fn claude_projects_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    Ok(PathBuf::from(home).join(".claude").join("projects"))
+}
+
+/// Encode a cwd path to Claude's project folder name format.
+/// Rules: /. -> /- (hidden dirs), / -> -, _ -> -
+fn cwd_to_project_folder(cwd: &str) -> String {
+    cwd.replace("/.", "/-").replace(['/', '_'], "-")
+}
+
+/// Find the most recent Claude transcript for a given cwd.
+/// Returns (transcript_path, session_id) if found.
+fn find_claude_transcript_for_cwd(
+    cwd: &str,
+    max_age_minutes: u64,
+) -> Result<Option<(PathBuf, String)>> {
+    let projects_dir = claude_projects_dir()?;
+    let folder_name = cwd_to_project_folder(cwd);
+    let project_dir = projects_dir.join(&folder_name);
+
+    if !project_dir.exists() {
+        return Ok(None);
+    }
+
+    // Find the most recently modified .jsonl file
+    let mut best: Option<(PathBuf, SystemTime)> = None;
+    for entry in fs::read_dir(&project_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let meta = entry.metadata()?;
+        if !meta.is_file() || meta.len() == 0 {
+            continue;
+        }
+        let modified = meta.modified().unwrap_or(UNIX_EPOCH);
+        if max_age_minutes > 0 && !is_fresh(modified, max_age_minutes) {
+            continue;
+        }
+        let dominated = match best.as_ref() {
+            Some((_, best_time)) => modified <= *best_time,
+            None => false,
+        };
+        if !dominated {
+            best = Some((path, modified));
+        }
+    }
+
+    let Some((path, _)) = best else {
+        return Ok(None);
+    };
+
+    // Extract session_id from filename (format: {session_id}.jsonl or agent-{id}.jsonl)
+    let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let session_id = if filename.starts_with("agent-") {
+        // Agent files use a different ID scheme, read from content
+        read_session_id_from_transcript(&path)?
+    } else {
+        // Regular session files use UUID as filename
+        Some(filename.to_string())
+    };
+
+    match session_id {
+        Some(id) => Ok(Some((path, id))),
+        None => Ok(None),
+    }
+}
+
+/// Read session_id from the first few lines of a transcript
+fn read_session_id_from_transcript(path: &Path) -> Result<Option<String>> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    for line in reader.lines().take(20) {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(id) = value.get("sessionId").and_then(|v| v.as_str()) {
+            return Ok(Some(id.to_string()));
+        }
+    }
+    Ok(None)
+}
+
 fn codex_home_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("CODEX_HOME") {
         if !dir.trim().is_empty() {
@@ -233,27 +324,6 @@ pub fn current_term_key() -> Result<String> {
         identity.tmux_pane.as_deref(),
         identity.iterm_session_id.as_deref(),
     ))
-}
-
-fn term_key_from_env() -> Option<String> {
-    if let Ok(key) = std::env::var("AGENTEXPORT_TERM") {
-        if !key.trim().is_empty() {
-            return Some(key);
-        }
-    }
-    if let Ok(key) = std::env::var("AGENTEXPORT_TERM_KEY") {
-        if !key.trim().is_empty() {
-            return Some(key);
-        }
-    }
-    None
-}
-
-fn resolve_term_key_from_env_or_tty() -> Result<String> {
-    if let Some(key) = term_key_from_env() {
-        return Ok(key);
-    }
-    current_term_key()
 }
 
 fn current_tty() -> Result<String> {
@@ -581,55 +651,6 @@ fn normalize_role(role: &str) -> String {
     }
 }
 
-#[allow(dead_code)]
-fn role_from_type(value: &str) -> Option<String> {
-    let lower = value.to_lowercase();
-    if lower.contains("assistant") || lower.contains("model") {
-        Some("assistant".to_string())
-    } else if lower.contains("user") || lower.contains("human") {
-        Some("user".to_string())
-    } else if lower.contains("system") {
-        Some("system".to_string())
-    } else if lower.contains("tool") || lower.contains("function") {
-        Some("tool".to_string())
-    } else {
-        None
-    }
-}
-
-#[allow(dead_code)]
-fn extract_role(value: &Value) -> Option<String> {
-    if let Some(role) = value.get("role").and_then(|v| v.as_str()) {
-        return Some(normalize_role(role));
-    }
-    if let Some(role) = value.pointer("/message/role").and_then(|v| v.as_str()) {
-        return Some(normalize_role(role));
-    }
-    if let Some(role) = value.get("speaker").and_then(|v| v.as_str()) {
-        return Some(normalize_role(role));
-    }
-    if let Some(role) = value.pointer("/author/role").and_then(|v| v.as_str()) {
-        return Some(normalize_role(role));
-    }
-    if value.get("tool_calls").is_some()
-        || value.get("tool_call").is_some()
-        || value.get("function_call").is_some()
-    {
-        return Some("tool".to_string());
-    }
-    if let Some(typ) = value.get("type").and_then(|v| v.as_str()) {
-        if let Some(role) = role_from_type(typ) {
-            return Some(role);
-        }
-    }
-    if let Some(event) = value.get("event").and_then(|v| v.as_str()) {
-        if let Some(role) = role_from_type(event) {
-            return Some(role);
-        }
-    }
-    None
-}
-
 fn extract_text(value: &Value, depth: usize) -> Option<String> {
     if depth > 6 {
         return None;
@@ -798,20 +819,6 @@ fn extract_content(value: &Value) -> Option<String> {
         .or_else(|| value.get("function_call"))
     {
         return Some(format_tool_call(tool_call));
-    }
-    None
-}
-
-#[allow(dead_code)]
-fn summarize_event(value: &Value) -> Option<String> {
-    if let Some(kind) = value.get("type").and_then(|v| v.as_str()) {
-        return Some(format!("event: {kind}"));
-    }
-    if let Some(kind) = value.get("event").and_then(|v| v.as_str()) {
-        return Some(format!("event: {kind}"));
-    }
-    if let Some(kind) = value.get("name").and_then(|v| v.as_str()) {
-        return Some(format!("event: {kind}"));
     }
     None
 }
@@ -1414,44 +1421,33 @@ fn create_share_payload(
 }
 
 fn resolve_claude_transcript(
-    term_key: &str,
     transcript_arg: Option<PathBuf>,
+    max_age_minutes: u64,
 ) -> Result<(PathBuf, Option<String>)> {
+    // If explicit transcript path provided, use it
     if let Some(path) = transcript_arg {
-        if let Ok(session_id) = std::env::var("AGENTEXPORT_CLAUDE_SESSION_ID") {
-            return Ok((path, Some(session_id)));
-        }
-        if let Ok(session_id) = std::env::var("TRANSCRIPTCTL_CLAUDE_SESSION_ID") {
-            return Ok((path, Some(session_id)));
-        }
-        if let Ok(state) = read_claude_state(term_key) {
-            return Ok((path, Some(state.session_id)));
-        }
-        return Ok((path, None));
+        let session_id = read_session_id_from_transcript(&path)?.or_else(|| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .filter(|s| !s.starts_with("agent-"))
+                .map(|s| s.to_string())
+        });
+        return Ok((path, session_id));
     }
-    if let Ok(path) = std::env::var("AGENTEXPORT_CLAUDE_TRANSCRIPT_PATH") {
-        let session_id = std::env::var("AGENTEXPORT_CLAUDE_SESSION_ID").ok();
-        if session_id.is_some() {
-            return Ok((PathBuf::from(path), session_id));
-        }
-        if let Ok(state) = read_claude_state(term_key) {
-            return Ok((PathBuf::from(path), Some(state.session_id)));
-        }
-        return Ok((PathBuf::from(path), None));
+
+    // Primary method: find transcript by cwd (no hook needed)
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|path| path.to_str().map(|s| s.to_string()))
+        .context("unable to resolve cwd; pass --transcript")?;
+
+    if let Some((path, session_id)) = find_claude_transcript_for_cwd(&cwd, max_age_minutes)? {
+        return Ok((path, Some(session_id)));
     }
-    if let Ok(path) = std::env::var("TRANSCRIPTCTL_CLAUDE_TRANSCRIPT_PATH") {
-        let session_id = std::env::var("TRANSCRIPTCTL_CLAUDE_SESSION_ID").ok();
-        if session_id.is_some() {
-            return Ok((PathBuf::from(path), session_id));
-        }
-        if let Ok(state) = read_claude_state(term_key) {
-            return Ok((PathBuf::from(path), Some(state.session_id)));
-        }
-        return Ok((PathBuf::from(path), None));
-    }
-    let state = read_claude_state(term_key)
-        .context("missing claude state; run claude-sessionstart first")?;
-    Ok((PathBuf::from(state.transcript_path), Some(state.session_id)))
+
+    bail!(
+        "no recent Claude transcript found for current directory; run from the Claude session directory, or pass --transcript"
+    )
 }
 
 fn resolve_codex_transcript(
@@ -1570,17 +1566,15 @@ fn find_codex_transcript_for_cwd_from_history(
 }
 
 pub fn publish(options: PublishOptions) -> Result<PublishResult> {
-    let term_key = match options.tool {
-        Tool::Claude => match options.term_key {
-            Some(key) => key,
-            None => resolve_term_key_from_env_or_tty()?,
-        },
-        Tool::Codex => options.term_key.unwrap_or_else(|| "codex".to_string()),
-    };
+    let term_key = options.term_key.unwrap_or_else(|| match options.tool {
+        Tool::Claude => "claude".to_string(),
+        Tool::Codex => "codex".to_string(),
+    });
 
     let (transcript_path, session_id, thread_id) = match options.tool {
         Tool::Claude => {
-            let (path, session_id) = resolve_claude_transcript(&term_key, options.transcript)?;
+            let (path, session_id) =
+                resolve_claude_transcript(options.transcript, options.max_age_minutes)?;
             (path, session_id, None)
         }
         Tool::Codex => {
@@ -1771,17 +1765,6 @@ mod tests {
                 old,
             }
         }
-
-        fn clear(key: &str) -> Self {
-            let old = std::env::var(key).ok();
-            unsafe {
-                std::env::remove_var(key);
-            }
-            Self {
-                key: key.to_string(),
-                old,
-            }
-        }
     }
 
     impl Drop for EnvGuard {
@@ -1814,14 +1797,6 @@ mod tests {
         let _guard = EnvGuard::set("AGENTEXPORT_CACHE_DIR", tmp.path().to_str().unwrap());
         let dir = cache_dir().unwrap();
         assert_eq!(dir, tmp.path());
-    }
-
-    #[test]
-    fn resolve_term_key_prefers_env() {
-        let _lock = env_lock();
-        let _guard = EnvGuard::set("AGENTEXPORT_TERM", "test-key");
-        let key = resolve_term_key_from_env_or_tty().unwrap();
-        assert_eq!(key, "test-key");
     }
 
     #[test]
@@ -1919,29 +1894,41 @@ mod tests {
     }
 
     #[test]
-    fn publish_claude_uses_state_transcript() {
+    fn publish_claude_finds_transcript_by_cwd() {
         let _lock = env_lock();
         let tmp = TempDir::new().unwrap();
         let _guard = EnvGuard::set("AGENTEXPORT_CACHE_DIR", tmp.path().to_str().unwrap());
-        // Clear env vars that would override the state lookup
-        let _guard2 = EnvGuard::clear("AGENTEXPORT_CLAUDE_TRANSCRIPT_PATH");
-        let _guard3 = EnvGuard::clear("AGENTEXPORT_CLAUDE_SESSION_ID");
 
-        let transcript = tmp.path().join("sess-abc.jsonl");
-        fs::write(&transcript, "{\"role\":\"user\",\"content\":\"Hello\"}\n").unwrap();
+        // Create a fake cwd and its corresponding project folder
+        let cwd = tmp.path().join("work");
+        fs::create_dir_all(&cwd).unwrap();
+        let cwd = fs::canonicalize(&cwd).unwrap();
 
-        let state = ClaudeState {
-            term_key: "term".to_string(),
-            session_id: "sess-abc".to_string(),
-            transcript_path: transcript.display().to_string(),
-            cwd: "/work".to_string(),
-            updated_at: 1,
-        };
-        write_claude_state(&state).unwrap();
+        // Create the .claude/projects dir structure that Claude uses
+        let folder_name = cwd_to_project_folder(cwd.to_str().unwrap());
+        let project_dir = tmp
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(&folder_name);
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // Override HOME to use our temp dir for .claude/projects
+        let _guard_home = EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        // Create a transcript file with proper session ID in filename
+        let transcript = project_dir.join("sess-abc.jsonl");
+        fs::write(
+            &transcript,
+            "{\"sessionId\":\"sess-abc\",\"type\":\"user\",\"message\":{\"content\":\"Hello\"}}\n",
+        )
+        .unwrap();
+
+        let _dir_guard = DirGuard::set(&cwd).unwrap();
 
         let result = publish(PublishOptions {
             tool: Tool::Claude,
-            term_key: Some("term".to_string()),
+            term_key: None,
             transcript: None,
             max_age_minutes: 0,
             out: None,
@@ -1956,6 +1943,22 @@ mod tests {
 
         assert_eq!(result.session_id.as_deref(), Some("sess-abc"));
         assert_eq!(PathBuf::from(&result.transcript_path), transcript);
+    }
+
+    #[test]
+    fn cwd_to_project_folder_encoding() {
+        assert_eq!(
+            cwd_to_project_folder("/Users/nico/Code/foo"),
+            "-Users-nico-Code-foo"
+        );
+        assert_eq!(
+            cwd_to_project_folder("/Users/nico/.claude/hooks"),
+            "-Users-nico--claude-hooks"
+        );
+        assert_eq!(
+            cwd_to_project_folder("/Users/nico/Code/uv_run"),
+            "-Users-nico-Code-uv-run"
+        );
     }
 
     #[test]

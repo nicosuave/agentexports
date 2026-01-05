@@ -9,13 +9,13 @@ Publish the current Claude session transcript using agentexport.
 
 ## Instructions
 
-Use the environment variable set by the SessionStart hook:
+Use the agentexport CLI to publish the current Claude session transcript:
 
 ```
-agentexport publish --tool claude --transcript "$AGENTEXPORT_CLAUDE_TRANSCRIPT_PATH" --render
+agentexport publish --tool claude
 ```
 
-If the env var is missing, ask the user to run `agentexport setup` to install the Claude hook, then restart Claude Code.
+The CLI automatically finds the transcript for the current working directory.
 
 ## Managing Shares
 

@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, bail};
 use dialoguer::{MultiSelect, theme::ColorfulTheme};
-use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,9 +7,7 @@ use crate::Tool;
 
 // Embed files at compile time
 const CLAUDE_COMMAND: &str = include_str!("../commands/claude/agentexport.md");
-const CLAUDE_HOOK: &str = include_str!("../skills/claude/hooks/agentexport");
 const CODEX_PROMPT: &str = include_str!("../skills/codex/agentexport.md");
-const CLAUDE_HOOK_NAME: &str = "agentexport";
 
 pub fn run() -> Result<()> {
     let theme = ColorfulTheme::default();
@@ -26,7 +23,7 @@ pub fn run() -> Result<()> {
     // Show what will be installed
     println!("This will install:");
     if claude_path.is_some() {
-        println!("  Claude Code: /agentexport command + SessionStart hook");
+        println!("  Claude Code: /agentexport command");
     }
     if codex_path.is_some() {
         println!("  Codex: /agentexport prompt");
@@ -66,8 +63,6 @@ pub fn run() -> Result<()> {
         match tool {
             Tool::Claude => {
                 install_claude_command()?;
-                install_claude_hook()?;
-                ensure_claude_sessionstart_config()?;
             }
             Tool::Codex => {
                 install_codex_prompt()?;
@@ -113,99 +108,9 @@ fn install_codex_prompt() -> Result<()> {
     Ok(())
 }
 
-fn install_claude_hook() -> Result<()> {
-    let hooks_dir = claude_home_dir()?.join("hooks");
-    fs::create_dir_all(&hooks_dir)?;
-    let dest = hooks_dir.join(CLAUDE_HOOK_NAME);
-    if dest.exists() {
-        println!(
-            "Skipping Claude hook (already installed at {}).",
-            dest.display()
-        );
-        return Ok(());
-    }
-    fs::write(&dest, CLAUDE_HOOK)?;
-    set_executable(&dest)?;
-    println!("Installed Claude hook to {}.", dest.display());
-    Ok(())
-}
-
-fn ensure_claude_sessionstart_config() -> Result<()> {
-    let settings_path = claude_home_dir()?.join("settings.json");
-    let mut root = if settings_path.exists() {
-        let raw = fs::read_to_string(&settings_path)?;
-        serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| Value::Object(Map::new()))
-    } else {
-        Value::Object(Map::new())
-    };
-
-    let mut changed = false;
-    let root_obj = ensure_object(&mut root);
-    let hooks_value = root_obj
-        .entry("hooks")
-        .or_insert_with(|| Value::Object(Map::new()));
-    let hooks_obj = ensure_object(hooks_value);
-    let session_value = hooks_obj
-        .entry("SessionStart")
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if !session_value.is_array() {
-        *session_value = Value::Array(Vec::new());
-    }
-    let session_arr = session_value.as_array_mut().unwrap();
-
-    let entry_index = find_or_create_session_entry(session_arr);
-    let entry_value = &mut session_arr[entry_index];
-    let entry_obj = ensure_object(entry_value);
-    let hooks_list = entry_obj
-        .entry("hooks")
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if !hooks_list.is_array() {
-        *hooks_list = Value::Array(Vec::new());
-    }
-    let hooks_arr = hooks_list.as_array_mut().unwrap();
-
-    let command = format!("\"$HOME/.claude/hooks/{CLAUDE_HOOK_NAME}\"");
-    let exists = hooks_arr.iter().any(|item| {
-        item.get("type").and_then(|v| v.as_str()) == Some("command")
-            && item.get("command").and_then(|v| v.as_str()) == Some(command.as_str())
-    });
-    if !exists {
-        hooks_arr.push(json!({
-            "type": "command",
-            "command": command,
-        }));
-        changed = true;
-    }
-
-    if changed {
-        let text = serde_json::to_string_pretty(&root)?;
-        fs::write(&settings_path, format!("{text}\n"))?;
-        println!("Updated Claude settings at {}.", settings_path.display());
-    } else {
-        println!("Claude settings already contain SessionStart hook.");
-    }
-
-    Ok(())
-}
-
-fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
-    if !value.is_object() {
-        *value = Value::Object(Map::new());
-    }
-    value.as_object_mut().unwrap()
-}
-
-fn find_or_create_session_entry(entries: &mut Vec<Value>) -> usize {
-    for (idx, entry) in entries.iter().enumerate() {
-        if entry.get("matcher").and_then(|v| v.as_str()) == Some("*") {
-            return idx;
-        }
-    }
-    entries.push(json!({
-        "matcher": "*",
-        "hooks": [],
-    }));
-    entries.len() - 1
+fn claude_home_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    Ok(PathBuf::from(home).join(".claude"))
 }
 
 fn ensure_claude_commands_dir() -> Result<PathBuf> {
@@ -218,11 +123,6 @@ fn ensure_codex_prompts_dir() -> Result<PathBuf> {
     let dir = crate::codex_home_dir()?.join("prompts");
     fs::create_dir_all(&dir)?;
     Ok(dir)
-}
-
-fn claude_home_dir() -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home).join(".claude"))
 }
 
 fn find_in_path(binary: &str) -> Option<PathBuf> {
@@ -247,18 +147,4 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(not(unix))]
 fn is_executable(path: &Path) -> bool {
     path.is_file()
-}
-
-#[cfg(unix)]
-fn set_executable(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_executable(_path: &Path) -> Result<()> {
-    Ok(())
 }

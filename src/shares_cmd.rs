@@ -4,7 +4,10 @@ use anyhow::{Result, bail};
 use dialoguer::{Select, theme::ColorfulTheme};
 use time::format_description;
 
-use agentexport::{StorageType, shares::{self, Share}};
+use agentexport::{
+    StorageType,
+    shares::{self, Share},
+};
 
 use crate::SharesAction;
 
