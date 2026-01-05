@@ -48,6 +48,9 @@ enum Commands {
         /// TTL for the share: 30, 60, 90, 180, 365, or 0 for forever (default from ~/.agentexport/config.toml or 30)
         #[arg(long)]
         ttl: Option<u64>,
+        /// Title for the share (overrides auto-detected title)
+        #[arg(long)]
+        title: Option<String>,
     },
     #[command(name = "setup")]
     Setup,
@@ -127,6 +130,7 @@ fn run() -> Result<()> {
             no_upload,
             render,
             ttl,
+            title,
         } => {
             let config = Config::load().unwrap_or_default();
             let effective_ttl = ttl.unwrap_or(config.default_ttl);
@@ -152,6 +156,7 @@ fn run() -> Result<()> {
                 ttl_days: effective_ttl,
                 storage_type: effective_storage_type,
                 gist_format: effective_gist_format,
+                title,
             })?;
 
             // When uploading, print just the share URL to stdout (for piping)
