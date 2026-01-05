@@ -3,7 +3,7 @@ use dialoguer::{MultiSelect, theme::ColorfulTheme};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::Tool;
+use crate::transcript::{Tool, codex_home_dir};
 
 // Embed files at compile time
 const CLAUDE_COMMAND: &str = include_str!("../commands/claude/agentexport.md");
@@ -120,7 +120,7 @@ fn ensure_claude_commands_dir() -> Result<PathBuf> {
 }
 
 fn ensure_codex_prompts_dir() -> Result<PathBuf> {
-    let dir = crate::codex_home_dir()?.join("prompts");
+    let dir = codex_home_dir()?.join("prompts");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
