@@ -1268,6 +1268,24 @@ function render(data) {
     const container = document.getElementById('messages');
     container.innerHTML = '';
 
+    // Add compaction summary as first message if present
+    if (data.compaction_summary) {
+        const div = document.createElement('div');
+        div.className = 'msg system';
+        const header = document.createElement('div');
+        header.className = 'msg-header';
+        const role = document.createElement('span');
+        role.className = 'msg-role system';
+        role.textContent = 'session summary';
+        header.appendChild(role);
+        div.appendChild(header);
+        const content = document.createElement('div');
+        content.className = 'msg-content';
+        content.textContent = data.compaction_summary;
+        div.appendChild(content);
+        container.appendChild(div);
+    }
+
     for (const msg of data.messages || []) {
         const div = document.createElement('div');
         div.className = 'msg ' + (msg.role || 'event');

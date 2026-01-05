@@ -74,6 +74,7 @@ pub struct PublishOptions {
     pub ttl_days: u64,
     pub storage_type: StorageType,
     pub gist_format: GistFormat,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,9 +110,10 @@ pub struct RenderedMessage {
 
 #[derive(Debug, Clone, Default)]
 struct TranscriptMeta {
-    title: Option<String>,
     slug: Option<String>,
     first_user_message: Option<String>,
+    /// Compaction summary (from Claude's summary events, NOT a title)
+    compaction_summary: Option<String>,
 }
 
 /// Payload sent to the viewer (encrypted JSON)
@@ -122,6 +124,9 @@ pub struct SharePayload {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Compaction summary from Claude (displayed in conversation, NOT as title)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction_summary: Option<String>,
     pub shared_at: String,
     /// Primary model (most used), shown in header
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -838,10 +843,12 @@ fn extract_transcript_meta(path: &Path) -> TranscriptMeta {
             Err(_) => continue,
         };
 
-        // Claude: look for summary type
-        if value.get("type").and_then(|v| v.as_str()) == Some("summary") {
-            if let Some(title) = value.get("summary").and_then(|v| v.as_str()) {
-                meta.title = Some(title.to_string());
+        // Claude: extract compaction summary (NOT for title, just for display)
+        if meta.compaction_summary.is_none() {
+            if value.get("type").and_then(|v| v.as_str()) == Some("summary") {
+                if let Some(summary) = value.get("summary").and_then(|v| v.as_str()) {
+                    meta.compaction_summary = Some(summary.to_string());
+                }
             }
         }
 
@@ -878,7 +885,7 @@ fn extract_transcript_meta(path: &Path) -> TranscriptMeta {
         }
 
         // Stop early if we have what we need
-        if meta.title.is_some() && meta.first_user_message.is_some() {
+        if meta.compaction_summary.is_some() && meta.first_user_message.is_some() {
             break;
         }
     }
@@ -1378,6 +1385,7 @@ fn create_share_payload(
     transcript_path: &Path,
     session_id: Option<&str>,
     thread_id: Option<&str>,
+    title_override: Option<&str>,
 ) -> Result<SharePayload> {
     let parsed = parse_transcript(transcript_path)?;
     let meta = extract_transcript_meta(transcript_path);
@@ -1387,8 +1395,8 @@ fn create_share_payload(
         Tool::Codex => "Codex",
     };
 
-    let title = meta
-        .title
+    let title = title_override
+        .map(|s| s.to_string())
         .or(meta.slug.map(|s| s.replace('-', " ")))
         .or(meta.first_user_message);
 
@@ -1402,6 +1410,7 @@ fn create_share_payload(
         tool: tool_display.to_string(),
         session_id: session_id.or(thread_id).map(|s| s.to_string()),
         title,
+        compaction_summary: meta.compaction_summary,
         shared_at: format_generated_at_nice(),
         model: parsed.dominant_model(),
         models,
@@ -1625,6 +1634,7 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
             &transcript_path,
             session_id.as_deref(),
             thread_id.as_deref(),
+            options.title.as_deref(),
         )?;
         let json = serde_json::to_string(&payload)?;
 
@@ -1908,6 +1918,7 @@ mod tests {
             ttl_days: 30,
             storage_type: StorageType::Agentexport,
             gist_format: GistFormat::Markdown,
+            title: None,
         })
         .unwrap();
 
@@ -1951,6 +1962,7 @@ mod tests {
             ttl_days: 30,
             storage_type: StorageType::Agentexport,
             gist_format: GistFormat::Markdown,
+            title: None,
         })
         .unwrap();
 
@@ -2005,6 +2017,7 @@ mod tests {
             ttl_days: 30,
             storage_type: StorageType::Agentexport,
             gist_format: GistFormat::Markdown,
+            title: None,
         })
         .unwrap();
 
@@ -2051,6 +2064,7 @@ mod tests {
             ttl_days: 30,
             storage_type: StorageType::Agentexport,
             gist_format: GistFormat::Markdown,
+            title: None,
         })
         .unwrap_err();
 
@@ -2215,7 +2229,7 @@ mod tests {
         let data = r#"{"type":"assistant","message":{"model":"claude-sonnet-4","usage":{"input_tokens":1000,"output_tokens":500},"content":[{"type":"text","text":"Hello"}]}}"#;
         fs::write(&path, data).unwrap();
 
-        let payload = create_share_payload(Tool::Claude, &path, None, None).unwrap();
+        let payload = create_share_payload(Tool::Claude, &path, None, None, None).unwrap();
         assert_eq!(payload.total_input_tokens, 1000);
         assert_eq!(payload.total_output_tokens, 500);
     }
