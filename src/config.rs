@@ -1,7 +1,73 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageType {
+    Agentexport,
+    Gist,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GistFormat {
+    Markdown,
+    Json,
+}
+
+impl GistFormat {
+    pub fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "markdown" | "md" => Ok(Self::Markdown),
+            "json" => Ok(Self::Json),
+            _ => bail!("invalid gist_format: must be markdown or json"),
+        }
+    }
+}
+
+impl Default for GistFormat {
+    fn default() -> Self {
+        GistFormat::Markdown
+    }
+}
+
+impl std::fmt::Display for GistFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            GistFormat::Markdown => "markdown",
+            GistFormat::Json => "json",
+        };
+        write!(f, "{value}")
+    }
+}
+
+impl StorageType {
+    pub fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "agentexport" => Ok(Self::Agentexport),
+            "gist" => Ok(Self::Gist),
+            _ => bail!("invalid storage_type: must be agentexport or gist"),
+        }
+    }
+}
+
+impl Default for StorageType {
+    fn default() -> Self {
+        StorageType::Agentexport
+    }
+}
+
+impl std::fmt::Display for StorageType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            StorageType::Agentexport => "agentexport",
+            StorageType::Gist => "gist",
+        };
+        write!(f, "{value}")
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -9,9 +75,17 @@ pub struct Config {
     #[serde(default = "default_ttl")]
     pub default_ttl: u64,
 
+    /// Storage backend (agentexport or gist)
+    #[serde(default = "default_storage_type")]
+    pub storage_type: StorageType,
+
     /// Upload URL (default: https://agentexports.com)
     #[serde(default = "default_upload_url")]
     pub upload_url: String,
+
+    /// Format for gist storage (html or json)
+    #[serde(default = "default_gist_format")]
+    pub gist_format: GistFormat,
 }
 
 fn default_ttl() -> u64 {
@@ -22,13 +96,21 @@ fn default_upload_url() -> String {
     "https://agentexports.com".to_string()
 }
 
+fn default_storage_type() -> StorageType {
+    StorageType::Agentexport
+}
+
+fn default_gist_format() -> GistFormat {
+    GistFormat::Markdown
+}
+
 fn config_path() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home).join(".agentexport"))
+    Ok(PathBuf::from(home).join(".agentexport").join("config.toml"))
 }
 
 impl Config {
-    /// Load config from ~/.agentexport, returning defaults if file doesn't exist
+    /// Load config from ~/.agentexport/config.toml, returning defaults if file doesn't exist
     pub fn load() -> Result<Self> {
         let path = config_path()?;
         if !path.exists() {
@@ -41,7 +123,7 @@ impl Config {
         Ok(config)
     }
 
-    /// Save config to ~/.agentexport
+    /// Save config to ~/.agentexport/config.toml
     pub fn save(&self) -> Result<PathBuf> {
         let path = config_path()?;
         let content = toml::to_string_pretty(self).context("failed to serialize config")?;
@@ -54,7 +136,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             default_ttl: default_ttl(),
+            storage_type: default_storage_type(),
             upload_url: default_upload_url(),
+            gist_format: default_gist_format(),
         }
     }
 }
@@ -71,7 +155,9 @@ mod tests {
 
         let config = Config {
             default_ttl: 90,
+            storage_type: StorageType::Gist,
             upload_url: "https://example.com".to_string(),
+            gist_format: GistFormat::Json,
         };
 
         let content = toml::to_string_pretty(&config).unwrap();
@@ -79,6 +165,7 @@ mod tests {
 
         let loaded: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(loaded.default_ttl, 90);
+        assert_eq!(loaded.storage_type, StorageType::Gist);
         assert_eq!(loaded.upload_url, "https://example.com");
     }
 
@@ -86,7 +173,9 @@ mod tests {
     fn config_defaults() {
         let config = Config::default();
         assert_eq!(config.default_ttl, 30);
+        assert_eq!(config.storage_type, StorageType::Agentexport);
         assert_eq!(config.upload_url, "https://agentexports.com");
+        assert_eq!(config.gist_format, GistFormat::Markdown);
     }
 
     #[test]
@@ -94,6 +183,30 @@ mod tests {
         let content = "default_ttl = 60\n";
         let config: Config = toml::from_str(content).unwrap();
         assert_eq!(config.default_ttl, 60);
+        assert_eq!(config.storage_type, StorageType::Agentexport);
         assert_eq!(config.upload_url, "https://agentexports.com");
+    }
+
+    #[test]
+    fn config_storage_type_parse() {
+        let content = "storage_type = \"gist\"\n";
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.storage_type, StorageType::Gist);
+    }
+
+    #[test]
+    fn config_gist_format_parse() {
+        let content = "gist_format = \"json\"\n";
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.gist_format, GistFormat::Json);
+    }
+
+    #[test]
+    fn gist_format_parse_variants() {
+        assert_eq!(GistFormat::parse("markdown").unwrap(), GistFormat::Markdown);
+        assert_eq!(GistFormat::parse("md").unwrap(), GistFormat::Markdown);
+        assert_eq!(GistFormat::parse("json").unwrap(), GistFormat::Json);
+        assert_eq!(GistFormat::parse("MARKDOWN").unwrap(), GistFormat::Markdown);
+        assert!(GistFormat::parse("invalid").is_err());
     }
 }

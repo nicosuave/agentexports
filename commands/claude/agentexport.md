@@ -1,9 +1,11 @@
 ---
-name: agentexport
 description: Publish or share Claude Code session transcripts using the agentexport CLI. Use when the user asks to export, publish, or generate a share page for a Claude session.
+allowed-tools: Bash(agentexport:*)
 ---
 
-# Agent Export (Claude)
+# Agent Export
+
+Publish the current Claude session transcript using agentexport.
 
 ## Instructions
 

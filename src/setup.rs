@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 
 use crate::Tool;
 
-const CLAUDE_SKILL_SRC: &str = "skills/claude/agentexport/SKILL.md";
-const CODEX_PROMPT_SRC: &str = "skills/codex/agentexport.md";
+// Embed files at compile time
+const CLAUDE_COMMAND: &str = include_str!("../commands/claude/agentexport.md");
+const CODEX_PROMPT: &str = include_str!("../skills/codex/agentexport.md");
 
-pub fn setup_skills_interactive() -> Result<()> {
+pub fn run() -> Result<()> {
     let theme = ColorfulTheme::default();
 
     // Detect installed tools
@@ -22,7 +23,7 @@ pub fn setup_skills_interactive() -> Result<()> {
     // Show what will be installed
     println!("This will install:");
     if claude_path.is_some() {
-        println!("  Claude Code: /agentexport skill");
+        println!("  Claude Code: /agentexport command");
     }
     if codex_path.is_some() {
         println!("  Codex: /agentexport prompt");
@@ -61,7 +62,7 @@ pub fn setup_skills_interactive() -> Result<()> {
         let (tool, _) = &items[index];
         match tool {
             Tool::Claude => {
-                install_claude_skill()?;
+                install_claude_command()?;
             }
             Tool::Codex => {
                 install_codex_prompt()?;
@@ -75,31 +76,23 @@ pub fn setup_skills_interactive() -> Result<()> {
     Ok(())
 }
 
-fn install_claude_skill() -> Result<()> {
-    let source = repo_path(CLAUDE_SKILL_SRC)?;
-    if !source.exists() {
-        bail!("missing {CLAUDE_SKILL_SRC} in repo");
-    }
-    let dest_dir = ensure_claude_skills_dir()?.join("agentexport");
-    let dest = dest_dir.join("SKILL.md");
+fn install_claude_command() -> Result<()> {
+    let dest_dir = ensure_claude_commands_dir()?;
+    let dest = dest_dir.join("agentexport.md");
     if dest.exists() {
         println!(
-            "Skipping Claude skill (already installed at {}).",
+            "Skipping Claude command (already installed at {}).",
             dest.display()
         );
         return Ok(());
     }
     fs::create_dir_all(&dest_dir)?;
-    fs::copy(&source, &dest)?;
-    println!("Installed Claude skill to {}.", dest.display());
+    fs::write(&dest, CLAUDE_COMMAND)?;
+    println!("Installed Claude command to {}.", dest.display());
     Ok(())
 }
 
 fn install_codex_prompt() -> Result<()> {
-    let source = repo_path(CODEX_PROMPT_SRC)?;
-    if !source.exists() {
-        bail!("missing {CODEX_PROMPT_SRC} in repo");
-    }
     let dest_dir = ensure_codex_prompts_dir()?;
     let dest = dest_dir.join("agentexport.md");
     if dest.exists() {
@@ -110,19 +103,18 @@ fn install_codex_prompt() -> Result<()> {
         return Ok(());
     }
     fs::create_dir_all(&dest_dir)?;
-    fs::copy(&source, &dest)?;
+    fs::write(&dest, CODEX_PROMPT)?;
     println!("Installed Codex prompt to {}.", dest.display());
     Ok(())
 }
 
-fn repo_path(relative: &str) -> Result<PathBuf> {
-    let root = std::env::current_dir().context("unable to resolve cwd")?;
-    Ok(root.join(relative))
+fn claude_home_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    Ok(PathBuf::from(home).join(".claude"))
 }
 
-fn ensure_claude_skills_dir() -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    let dir = PathBuf::from(home).join(".claude").join("skills");
+fn ensure_claude_commands_dir() -> Result<PathBuf> {
+    let dir = claude_home_dir()?.join("commands");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -155,20 +147,4 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(not(unix))]
 fn is_executable(path: &Path) -> bool {
     path.is_file()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn repo_path_joins_cwd() {
-        let tmp = TempDir::new().unwrap();
-        let cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        let path = repo_path("skills/claude/agentexport/SKILL.md").unwrap();
-        assert!(path.ends_with("skills/claude/agentexport/SKILL.md"));
-        std::env::set_current_dir(cwd).unwrap();
-    }
 }

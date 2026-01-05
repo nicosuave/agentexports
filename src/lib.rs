@@ -15,12 +15,12 @@ use walkdir::WalkDir;
 
 pub mod config;
 mod crypto;
+mod setup;
 pub mod shares;
-mod skills;
 mod upload;
 
-pub use config::Config;
-pub use skills::setup_skills_interactive;
+pub use config::{Config, GistFormat, StorageType};
+pub use setup::run as run_setup;
 
 const APP_NAME: &str = "agentexport";
 
@@ -72,6 +72,8 @@ pub struct PublishOptions {
     pub upload_url: Option<String>,
     pub render: bool,
     pub ttl_days: u64,
+    pub storage_type: StorageType,
+    pub gist_format: GistFormat,
 }
 
 #[derive(Debug, Serialize)]
@@ -128,6 +130,19 @@ pub struct SharePayload {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
     pub messages: Vec<RenderedMessage>,
+    /// Token usage totals (if available)
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total_input_tokens: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total_output_tokens: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total_cache_read_tokens: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total_cache_creation_tokens: u64,
+}
+
+fn is_zero(val: &u64) -> bool {
+    *val == 0
 }
 
 fn now_unix() -> u64 {
@@ -878,12 +893,27 @@ fn extract_transcript_meta(path: &Path) -> TranscriptMeta {
     meta
 }
 
+/// Token usage for a single message
+#[derive(Debug, Clone, Default)]
+struct MessageUsage {
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+}
+
 /// Result of parsing a transcript
 #[derive(Debug, Default)]
 struct ParseResult {
     messages: Vec<RenderedMessage>,
     /// Model usage counts for determining dominant model
     model_counts: HashMap<String, usize>,
+    /// Token usage by message ID (deduplicated - later values overwrite earlier)
+    usage_by_message_id: HashMap<String, MessageUsage>,
+    /// Token usage totals (for Codex cumulative totals, not deduplicated)
+    codex_total_input_tokens: u64,
+    codex_total_output_tokens: u64,
+    codex_total_cache_read_tokens: u64,
 }
 
 impl ParseResult {
@@ -897,6 +927,50 @@ impl ParseResult {
     /// Get the dominant (most used) model
     fn dominant_model(&self) -> Option<String> {
         self.models_by_usage().into_iter().next()
+    }
+
+    /// Compute total input tokens (Claude: sum deduplicated, Codex: use cumulative)
+    fn total_input_tokens(&self) -> u64 {
+        if self.codex_total_input_tokens > 0 {
+            self.codex_total_input_tokens
+        } else {
+            self.usage_by_message_id
+                .values()
+                .map(|u| u.input_tokens)
+                .sum()
+        }
+    }
+
+    /// Compute total output tokens
+    fn total_output_tokens(&self) -> u64 {
+        if self.codex_total_output_tokens > 0 {
+            self.codex_total_output_tokens
+        } else {
+            self.usage_by_message_id
+                .values()
+                .map(|u| u.output_tokens)
+                .sum()
+        }
+    }
+
+    /// Compute total cache read tokens
+    fn total_cache_read_tokens(&self) -> u64 {
+        if self.codex_total_cache_read_tokens > 0 {
+            self.codex_total_cache_read_tokens
+        } else {
+            self.usage_by_message_id
+                .values()
+                .map(|u| u.cache_read_tokens)
+                .sum()
+        }
+    }
+
+    /// Compute total cache creation tokens
+    fn total_cache_creation_tokens(&self) -> u64 {
+        self.usage_by_message_id
+            .values()
+            .map(|u| u.cache_creation_tokens)
+            .sum()
     }
 }
 
@@ -932,11 +1006,14 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
             continue;
         }
 
-        // Skip internal events
+        // Skip internal events (but process event_msg in Codex mode for token usage)
         if matches!(
             event_type,
-            "file-history-snapshot" | "event_msg" | "summary" | "queue-operation"
+            "file-history-snapshot" | "summary" | "queue-operation"
         ) {
+            continue;
+        }
+        if event_type == "event_msg" && !codex_mode {
             continue;
         }
 
@@ -944,8 +1021,34 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
         if codex_mode {
             // Track model from turn_context
             if event_type == "turn_context" {
-                if let Some(model) = value.pointer("/model").and_then(|v| v.as_str()) {
+                if let Some(model) = value.pointer("/payload/model").and_then(|v| v.as_str()) {
                     current_model = Some(model.to_string());
+                }
+                continue;
+            }
+
+            // Extract token usage from event_msg (Codex reports cumulative totals)
+            if event_type == "event_msg" {
+                if let Some(payload_type) = value.pointer("/payload/type").and_then(|v| v.as_str())
+                {
+                    if payload_type == "token_count" {
+                        if let Some(usage) = value.pointer("/payload/info/total_token_usage") {
+                            if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64())
+                            {
+                                result.codex_total_input_tokens = input; // cumulative total
+                            }
+                            if let Some(output) =
+                                usage.get("output_tokens").and_then(|v| v.as_u64())
+                            {
+                                result.codex_total_output_tokens = output;
+                            }
+                            if let Some(cached) =
+                                usage.get("cached_input_tokens").and_then(|v| v.as_u64())
+                            {
+                                result.codex_total_cache_read_tokens = cached;
+                            }
+                        }
+                    }
                 }
                 continue;
             }
@@ -961,6 +1064,23 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                         .and_then(|v| v.as_str())
                         .map(normalize_role)
                         .unwrap_or_else(|| "assistant".to_string());
+
+                    // Check for images in content array
+                    if let Some(content_arr) = payload.get("content").and_then(|v| v.as_array()) {
+                        for block in content_arr {
+                            if block.get("type").and_then(|t| t.as_str()) == Some("input_image") {
+                                result.messages.push(RenderedMessage {
+                                    role: role.clone(),
+                                    content: "[Image]".to_string(),
+                                    raw: None,
+                                    raw_label: None,
+                                    tool_use_id: None,
+                                    model: current_model.clone(),
+                                });
+                            }
+                        }
+                    }
+
                     let content = extract_content(payload).unwrap_or_default();
                     if !content.trim().is_empty() && !looks_like_internal_block(&content) {
                         let model = current_model.clone();
@@ -1020,6 +1140,33 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                         tool_use_id: call_id,
                         model: None,
                     });
+                } else if payload_type == "reasoning" {
+                    // Codex reasoning/thinking - extract summary text (full content is encrypted)
+                    if let Some(summary_arr) = payload.get("summary").and_then(|v| v.as_array()) {
+                        let summary_text: Vec<String> = summary_arr
+                            .iter()
+                            .filter_map(|item| {
+                                if item.get("type").and_then(|t| t.as_str()) == Some("summary_text")
+                                {
+                                    item.get("text")
+                                        .and_then(|t| t.as_str())
+                                        .map(|s| s.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if !summary_text.is_empty() {
+                            result.messages.push(RenderedMessage {
+                                role: "thinking".to_string(),
+                                content: summary_text.join("\n"),
+                                raw: None,
+                                raw_label: None,
+                                tool_use_id: None,
+                                model: current_model.clone(),
+                            });
+                        }
+                    }
                 } else if is_tool_payload(payload) {
                     let content = tool_summary(payload);
                     let raw = serde_json::to_string_pretty(payload)
@@ -1082,6 +1229,44 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                     .map(|s| s.to_string());
                 if let Some(ref m) = model {
                     *result.model_counts.entry(m.clone()).or_insert(0) += 1;
+                }
+
+                // Extract token usage from message.usage, deduplicated by message.id
+                // Claude streams multiple updates for the same message ID - use last values
+                if let Some(usage) = value.pointer("/message/usage") {
+                    let msg_id = value
+                        .pointer("/message/id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    let input = usage
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let output = usage
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let cache_read = usage
+                        .get("cache_read_input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let cache_create = usage
+                        .get("cache_creation_input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+
+                    // Overwrite - later updates have final values
+                    result.usage_by_message_id.insert(
+                        msg_id,
+                        MessageUsage {
+                            input_tokens: input,
+                            output_tokens: output,
+                            cache_read_tokens: cache_read,
+                            cache_creation_tokens: cache_create,
+                        },
+                    );
                 }
 
                 // Assistant message: message.content is array of blocks
@@ -1151,7 +1336,33 @@ fn parse_transcript(path: &Path) -> Result<ParseResult> {
                                     model: None,
                                 });
                             }
-                            // Skip "thinking" blocks
+                            "thinking" => {
+                                if let Some(thinking_text) =
+                                    block.get("thinking").and_then(|v| v.as_str())
+                                {
+                                    if !thinking_text.trim().is_empty() {
+                                        result.messages.push(RenderedMessage {
+                                            role: "thinking".to_string(),
+                                            content: thinking_text.to_string(),
+                                            raw: None,
+                                            raw_label: None,
+                                            tool_use_id: None,
+                                            model: model.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                            "image" => {
+                                // Placeholder for images - don't include base64 data
+                                result.messages.push(RenderedMessage {
+                                    role: "assistant".to_string(),
+                                    content: "[Image]".to_string(),
+                                    raw: None,
+                                    raw_label: None,
+                                    tool_use_id: None,
+                                    model: model.clone(),
+                                });
+                            }
                             _ => {}
                         }
                     }
@@ -1189,6 +1400,10 @@ fn create_share_payload(
         .or(meta.first_user_message);
 
     let models = parsed.models_by_usage();
+    let total_input = parsed.total_input_tokens();
+    let total_output = parsed.total_output_tokens();
+    let total_cache_read = parsed.total_cache_read_tokens();
+    let total_cache_creation = parsed.total_cache_creation_tokens();
 
     Ok(SharePayload {
         tool: tool_display.to_string(),
@@ -1198,6 +1413,10 @@ fn create_share_payload(
         model: parsed.dominant_model(),
         models,
         messages: parsed.messages,
+        total_input_tokens: total_input,
+        total_output_tokens: total_output,
+        total_cache_read_tokens: total_cache_read,
+        total_cache_creation_tokens: total_cache_creation,
     })
 }
 
@@ -1421,6 +1640,35 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
     // Handle upload
     let (share_url, note) = if options.dry_run {
         (None, "upload skipped (dry-run)".to_string())
+    } else if options.upload_url.is_none() {
+        (None, "upload skipped (no upload_url)".to_string())
+    } else if options.storage_type == StorageType::Gist {
+        let json = payload_json.expect("Payload should be created for upload");
+        let description = format!(
+            "agentexport share ({}, {})",
+            options.tool.as_str(),
+            format_generated_at_nice()
+        );
+        let result = upload::upload_gist("gist", &json, &description, options.gist_format)?;
+
+        // Save share locally for management
+        let share_url = result.share_url.clone();
+        let share = shares::Share {
+            id: result.id,
+            key: result.key,
+            delete_token: result.delete_token,
+            upload_url: result.upload_url,
+            share_url: Some(share_url),
+            created_at: time::OffsetDateTime::now_utc(),
+            expires_at: time::OffsetDateTime::from_unix_timestamp(result.expires_at as i64)
+                .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+            tool: options.tool.as_str().to_string(),
+            transcript_path: transcript_path.display().to_string(),
+            storage_type: options.storage_type,
+        };
+        shares::save_share(&share)?;
+
+        (Some(result.share_url), "uploaded successfully".to_string())
     } else if let Some(upload_url) = &options.upload_url {
         let json = payload_json.expect("Payload should be created for upload");
         let encrypted = crypto::encrypt_html(&json)?;
@@ -1432,16 +1680,19 @@ pub fn publish(options: PublishOptions) -> Result<PublishResult> {
         )?;
 
         // Save share locally for management
+        let share_url = result.share_url.clone();
         let share = shares::Share {
             id: result.id,
             key: result.key,
             delete_token: result.delete_token,
             upload_url: result.upload_url,
+            share_url: Some(share_url),
             created_at: time::OffsetDateTime::now_utc(),
             expires_at: time::OffsetDateTime::from_unix_timestamp(result.expires_at as i64)
                 .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
             tool: options.tool.as_str().to_string(),
             transcript_path: transcript_path.display().to_string(),
+            storage_type: options.storage_type,
         };
         shares::save_share(&share)?;
 
@@ -1630,6 +1881,8 @@ mod tests {
             upload_url: None,
             render: true,
             ttl_days: 30,
+            storage_type: StorageType::Agentexport,
+            gist_format: GistFormat::Markdown,
         })
         .unwrap();
 
@@ -1683,6 +1936,8 @@ mod tests {
             upload_url: None,
             render: false,
             ttl_days: 30,
+            storage_type: StorageType::Agentexport,
+            gist_format: GistFormat::Markdown,
         })
         .unwrap();
 
@@ -1751,6 +2006,8 @@ mod tests {
             upload_url: None,
             render: false,
             ttl_days: 30,
+            storage_type: StorageType::Agentexport,
+            gist_format: GistFormat::Markdown,
         })
         .unwrap();
 
@@ -1795,6 +2052,8 @@ mod tests {
             upload_url: None,
             render: false,
             ttl_days: 30,
+            storage_type: StorageType::Agentexport,
+            gist_format: GistFormat::Markdown,
         })
         .unwrap_err();
 
@@ -1846,5 +2105,158 @@ mod tests {
         assert_eq!(bytes, 2);
         let filename = transcript.file_name().and_then(|s| s.to_str()).unwrap();
         assert!(filename.contains("sess-123"));
+    }
+
+    #[test]
+    fn parse_claude_thinking_blocks() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        let data = r#"{"type":"assistant","message":{"model":"claude-sonnet-4","content":[{"type":"thinking","thinking":"Let me analyze this..."},{"type":"text","text":"Here is my answer"}]}}"#;
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].role, "thinking");
+        assert_eq!(result.messages[0].content, "Let me analyze this...");
+        assert_eq!(result.messages[1].role, "assistant");
+        assert_eq!(result.messages[1].content, "Here is my answer");
+    }
+
+    #[test]
+    fn parse_claude_image_placeholder() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        let data = r#"{"type":"assistant","message":{"model":"claude-sonnet-4","content":[{"type":"image","source":{"type":"base64","data":"abc123"}},{"type":"text","text":"As shown above"}]}}"#;
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].role, "assistant");
+        assert_eq!(result.messages[0].content, "[Image]");
+        assert_eq!(result.messages[1].content, "As shown above");
+    }
+
+    #[test]
+    fn parse_claude_token_usage() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        // Two different messages with different IDs - usage is summed
+        let data = concat!(
+            r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4","usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":800,"cache_creation_input_tokens":200},"content":[{"type":"text","text":"Hello"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"msg_2","model":"claude-sonnet-4","usage":{"input_tokens":1500,"output_tokens":300,"cache_read_input_tokens":1200,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"World"}]}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.total_input_tokens(), 2500);
+        assert_eq!(result.total_output_tokens(), 800);
+        assert_eq!(result.total_cache_read_tokens(), 2000);
+        assert_eq!(result.total_cache_creation_tokens(), 200);
+    }
+
+    #[test]
+    fn parse_claude_token_usage_dedup() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        // Same message ID streamed multiple times - only last values count
+        let data = concat!(
+            r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4","usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"H"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Hello"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4","usage":{"input_tokens":100,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Hello World"}]}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        // Should use final values (100, 100), not sum (100+100+100)
+        assert_eq!(result.total_input_tokens(), 100);
+        assert_eq!(result.total_output_tokens(), 100);
+    }
+
+    #[test]
+    fn parse_codex_reasoning_summary() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let data = concat!(
+            r#"{"type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"**Analyzing the code**"}],"encrypted_content":"abc123"}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].role, "thinking");
+        assert_eq!(result.messages[0].content, "**Analyzing the code**");
+    }
+
+    #[test]
+    fn parse_codex_model_from_turn_context() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let data = concat!(
+            r#"{"type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#,
+            "\n",
+            r#"{"type":"turn_context","payload":{"model":"gpt-5","cwd":"/test"}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].model, Some("gpt-5".to_string()));
+        assert!(result.model_counts.contains_key("gpt-5"));
+    }
+
+    #[test]
+    fn share_payload_includes_token_usage() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        let data = r#"{"type":"assistant","message":{"model":"claude-sonnet-4","usage":{"input_tokens":1000,"output_tokens":500},"content":[{"type":"text","text":"Hello"}]}}"#;
+        fs::write(&path, data).unwrap();
+
+        let payload = create_share_payload(Tool::Claude, &path, None, None).unwrap();
+        assert_eq!(payload.total_input_tokens, 1000);
+        assert_eq!(payload.total_output_tokens, 500);
+    }
+
+    #[test]
+    fn parse_codex_token_usage() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let data = concat!(
+            r#"{"type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":500}}}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2500,"cached_input_tokens":800,"output_tokens":1200}}}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        // Should have final totals (Codex reports cumulative totals)
+        assert_eq!(result.total_input_tokens(), 2500);
+        assert_eq!(result.total_output_tokens(), 1200);
+        assert_eq!(result.total_cache_read_tokens(), 800);
+    }
+
+    #[test]
+    fn parse_codex_image_placeholder() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("codex.jsonl");
+        let data = concat!(
+            r#"{"type":"session_meta","payload":{"originator":"codex_cli_rs"}}"#,
+            "\n",
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,abc"},{"type":"input_text","text":"What is this?"}]}}"#
+        );
+        fs::write(&path, data).unwrap();
+
+        let result = parse_transcript(&path).unwrap();
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].content, "[Image]");
+        assert_eq!(result.messages[1].content, "What is this?");
     }
 }

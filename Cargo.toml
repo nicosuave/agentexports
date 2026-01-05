@@ -1,10 +1,6 @@
-[workspace]
-members = [".", "worker"]
-resolver = "2"
-
 [package]
 name = "agentexport"
-version = "0.1.1"
+version = "0.2.4"
 edition = "2024"
 
 [dependencies]
@@ -27,6 +23,6 @@ rand = "0.8"
 base64 = "0.22"
 ureq = { version = "2", features = ["json"] }
 toml = "0.9.10"
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"

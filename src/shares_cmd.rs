@@ -4,7 +4,10 @@ use anyhow::{Result, bail};
 use dialoguer::{Select, theme::ColorfulTheme};
 use time::format_description;
 
-use agentexport::shares::{self, Share};
+use agentexport::{
+    StorageType,
+    shares::{self, Share},
+};
 
 use crate::SharesAction;
 
@@ -55,7 +58,7 @@ fn unshare(id: &str) -> Result<()> {
         Some(share) => {
             // Delete from server
             println!("Deleting share {id} from server...");
-            match delete_from_server(&share) {
+            match delete_share(&share) {
                 Ok(()) => println!("Deleted from server."),
                 Err(e) => println!("Server delete failed (may already be gone): {e}"),
             }
@@ -177,6 +180,27 @@ fn interactive() -> Result<()> {
                 // Back
             }
         }
+    }
+
+    Ok(())
+}
+
+fn delete_share(share: &Share) -> Result<()> {
+    if share.storage_type == StorageType::Gist {
+        delete_from_gist(share)
+    } else {
+        delete_from_server(share)
+    }
+}
+
+fn delete_from_gist(share: &Share) -> Result<()> {
+    let output = std::process::Command::new("gh")
+        .args(["api", "-X", "DELETE", &format!("gists/{}", share.id)])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("GitHub delete failed: {}", stderr.trim());
     }
 
     Ok(())

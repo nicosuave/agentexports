@@ -1,27 +1,35 @@
 # agentexport
 
-Share Claude Code and Codex session transcripts with zero-knowledge encryption.
+Share Claude Code and Codex session transcripts with end-to-end encryption.
+
+[Check out a demo](https://agentexports.com/v/nbc6b43907ec5c0f3#EzyQxZQA3hJnwoO7rzJYym0kjIArv4DuPh2asptdEPM)
 
 ## Features
 
-- **Zero-knowledge sharing**: Transcripts are encrypted client-side. The server only sees encrypted blobs.
-- **Privacy by design**: Decryption keys live only in URL fragments, never sent to servers.
+- **Private by default**: Your transcripts are encrypted before they leave your machine. The server never sees your content.
+- **Safe links**: The decryption key is part of the URL itself, so only people you share with can read it.
 - **Works with Claude Code and Codex**: Just run `/agentexport` in Claude or the publish command in Codex.
 
 ## Installation
 
 ```bash
+brew install nicosuave/tap/agentexport
+```
+
+Or
+
+```bash
 curl -fsSL https://agentexports.com/setup | sh
 ```
 
-Then run setup to install skills:
+Then run setup to install commands:
 
 ```bash
-agentexport setup-skills
+agentexport setup
 ```
 
 This will:
-- **Claude Code**: Install the `/agentexport` skill
+- **Claude Code**: Install the `/agentexport` command
 - **Codex**: Install the `/agentexport` prompt
 
 Restart Claude/Codex after setup.
@@ -94,7 +102,20 @@ agentexport shares unshare <id>
 
 Shares are stored locally in `~/.cache/agentexport/shares.json` with the decryption keys needed for deletion.
 
+### GitHub Gist Backend (No Encryption)
+
+You can upload to GitHub Gist instead of the default server. This stores the share payload as a gist and returns the gist URL. Requires the GitHub CLI to be authenticated.
+
+```bash
+gh auth login
+agentexport config set storage_type gist
+```
+
+Gists are created as secret (unlisted) by default. Gists are not encrypted and do not expire. The TTL setting is ignored. `upload_url` is ignored for the gist backend.
+
 ## Self-Hosting
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nicosuave/agentexport/tree/main/worker)
 
 ### Deploy the Worker
 
@@ -120,6 +141,14 @@ Then configure the CLI to use your domain:
 ```bash
 agentexport config set upload_url https://your-domain.com
 ```
+
+### Configuration
+
+Set environment variables in `wrangler.toml` under `[vars]`:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MAX_TTL_DAYS` | Maximum allowed retention period. Requests exceeding this are rejected. Set to `365` to disable "forever" retention. | unlimited |
 
 ## Development
 

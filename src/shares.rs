@@ -6,6 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
+use crate::StorageType;
+
 /// A shared transcript record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Share {
@@ -14,6 +16,10 @@ pub struct Share {
     /// Random token for delete authorization (only uploader has this)
     pub delete_token: String,
     pub upload_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_url: Option<String>,
+    #[serde(default)]
+    pub storage_type: StorageType,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -25,6 +31,9 @@ pub struct Share {
 impl Share {
     /// Get the full share URL
     pub fn url(&self) -> String {
+        if let Some(url) = &self.share_url {
+            return url.to_string();
+        }
         format!("{}/v/{}#{}", self.upload_url, self.id, self.key)
     }
 
@@ -118,6 +127,8 @@ mod tests {
             key: "key123".to_string(),
             delete_token: "token123".to_string(),
             upload_url: "https://example.com".to_string(),
+            share_url: None,
+            storage_type: StorageType::Agentexport,
             created_at: OffsetDateTime::now_utc(),
             expires_at: OffsetDateTime::now_utc(),
             tool: "claude".to_string(),
@@ -129,6 +140,13 @@ mod tests {
     fn test_share_url() {
         let share = make_test_share("abc123");
         assert_eq!(share.url(), "https://example.com/v/abc123#key123");
+    }
+
+    #[test]
+    fn test_share_url_override() {
+        let mut share = make_test_share("abc123");
+        share.share_url = Some("https://gist.github.com/test/abc123".to_string());
+        assert_eq!(share.url(), "https://gist.github.com/test/abc123");
     }
 
     #[test]
