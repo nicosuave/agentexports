@@ -22,15 +22,15 @@ Or
 curl -fsSL https://agentexports.com/setup | sh
 ```
 
-Then run setup to install commands and hooks:
+Then run setup to install commands:
 
 ```bash
 agentexport setup
 ```
 
 This will:
-- **Claude Code**: Install the `/agentexport` command and a SessionStart hook
-- **Codex**: Install the publish prompt
+- **Claude Code**: Install the `/agentexport` command
+- **Codex**: Install the `/agentexport` prompt
 
 Restart Claude/Codex after setup.
 

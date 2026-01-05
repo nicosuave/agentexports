@@ -11,13 +11,13 @@ Publish the current Claude session transcript using agentexport.
 
 1. Generate a short, descriptive title for this session (max 60 chars). Summarize what was accomplished or discussed. Examples: "Implement user authentication", "Debug API rate limiting", "Refactor database schema".
 
-2. Use the environment variable set by the SessionStart hook, passing the title:
+2. Use the agentexport CLI to publish the current Claude session transcript, passing the title:
 
 ```
-agentexport publish --tool claude --transcript "$AGENTEXPORT_CLAUDE_TRANSCRIPT_PATH" --title "<your title here>"
+agentexport publish --tool claude --title "<your title here>"
 ```
 
-If the env var is missing, ask the user to run `agentexport setup` to install the Claude hook, then restart Claude Code.
+The CLI automatically finds the transcript for the current working directory.
 
 ## Managing Shares
 
