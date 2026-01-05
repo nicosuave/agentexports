@@ -368,6 +368,8 @@ pub enum BlobStatus {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     // Integration tests would require a running worker
     // Unit tests for URL construction
 
@@ -395,5 +397,192 @@ mod tests {
             url,
             "https://agentexports.com/v/abc123def456#SGVsbG8gV29ybGQ"
         );
+    }
+
+    #[test]
+    fn test_render_gist_markdown_basic() {
+        let payload = serde_json::json!({
+            "title": "Test Session",
+            "tool": "Claude Code",
+            "shared_at": "Jan 4, 2025 10:30am",
+            "messages": [
+                {"role": "user", "content": "Hello, world!"},
+                {"role": "assistant", "content": "Hi there!"}
+            ]
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("# Test Session"));
+        assert!(md.contains("Claude Code"));
+        assert!(md.contains("Jan 4, 2025 10:30am"));
+        assert!(md.contains("### User"));
+        assert!(md.contains("Hello, world!"));
+        assert!(md.contains("### Assistant"));
+        assert!(md.contains("Hi there!"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_all_roles() {
+        let payload = serde_json::json!({
+            "title": "Multi-role Test",
+            "messages": [
+                {"role": "user", "content": "User message"},
+                {"role": "assistant", "content": "Assistant message"},
+                {"role": "tool", "content": "Tool output"},
+                {"role": "thinking", "content": "Thinking about it..."},
+                {"role": "system", "content": "System instruction"}
+            ]
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("### User"));
+        assert!(md.contains("### Assistant"));
+        assert!(md.contains("### Tool"));
+        assert!(md.contains("### Thinking"));
+        assert!(md.contains("### System"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_tool_code_blocks() {
+        // Tool messages with JSON should be wrapped in code blocks
+        let payload = serde_json::json!({
+            "title": "Tool Test",
+            "messages": [
+                {"role": "tool", "content": "{\"result\": \"success\"}"}
+            ]
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("```\n{\"result\": \"success\"}\n```"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_tool_multiline_code_blocks() {
+        // Tool messages with multiline content should be wrapped in code blocks
+        let payload = serde_json::json!({
+            "title": "Tool Test",
+            "messages": [
+                {"role": "tool", "content": "line1\nline2\nline3"}
+            ]
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("```\nline1\nline2\nline3\n```"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_tool_simple_inline() {
+        // Simple tool output without JSON/multiline should be inline code
+        let payload = serde_json::json!({
+            "title": "Tool Test",
+            "messages": [
+                {"role": "tool", "content": "success"}
+            ]
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("`success`"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_with_raw_details() {
+        let payload = serde_json::json!({
+            "title": "Details Test",
+            "messages": [
+                {
+                    "role": "tool",
+                    "content": "Tool result",
+                    "raw": "{\"detailed\": \"output\"}",
+                    "raw_label": "Full Output"
+                }
+            ]
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("<details>"));
+        assert!(md.contains("<summary>Full Output</summary>"));
+        assert!(md.contains("```json"));
+        assert!(md.contains("{\"detailed\": \"output\"}"));
+        assert!(md.contains("</details>"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_token_stats() {
+        let payload = serde_json::json!({
+            "title": "Token Test",
+            "messages": [],
+            "total_input_tokens": 1000,
+            "total_output_tokens": 500,
+            "total_cache_read_tokens": 200,
+            "total_cache_creation_tokens": 100
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("Input: 1000 tokens"));
+        assert!(md.contains("Output: 500 tokens"));
+        assert!(md.contains("Cache read: 200 tokens"));
+        assert!(md.contains("Cache write: 100 tokens"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_no_stats_when_zero() {
+        let payload = serde_json::json!({
+            "title": "No Stats",
+            "messages": [{"role": "user", "content": "Hi"}]
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        // Should not have the stats footer separator when no tokens
+        let parts: Vec<&str> = md.split("---").collect();
+        // First separator is after metadata, should only have that one
+        assert_eq!(parts.len(), 2);
+    }
+
+    #[test]
+    fn test_render_gist_markdown_multiple_models() {
+        let payload = serde_json::json!({
+            "title": "Multi-model",
+            "models": ["claude-sonnet-4", "claude-haiku"],
+            "messages": []
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("claude-sonnet-4 + claude-haiku"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_single_model() {
+        let payload = serde_json::json!({
+            "title": "Single model",
+            "model": "claude-opus-4",
+            "messages": []
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("claude-opus-4"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_message_model_suffix() {
+        let payload = serde_json::json!({
+            "title": "Model per message",
+            "messages": [
+                {"role": "assistant", "content": "Hello", "model": "claude-sonnet-4"}
+            ]
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        assert!(md.contains("### Assistant (claude-sonnet-4)"));
+    }
+
+    #[test]
+    fn test_render_gist_markdown_missing_title() {
+        let payload = serde_json::json!({
+            "messages": [{"role": "user", "content": "Hi"}]
+        });
+        let md = render_gist_markdown(&payload.to_string()).unwrap();
+
+        // Uses default title
+        assert!(md.contains("# Agent Export"));
     }
 }

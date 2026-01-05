@@ -2270,4 +2270,218 @@ mod tests {
         assert_eq!(result.messages[0].content, "[Image]");
         assert_eq!(result.messages[1].content, "What is this?");
     }
+
+    // ===== shell_quote tests =====
+
+    #[test]
+    fn test_shell_quote_empty() {
+        assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn test_shell_quote_simple() {
+        assert_eq!(shell_quote("hello"), "'hello'");
+    }
+
+    #[test]
+    fn test_shell_quote_with_spaces() {
+        assert_eq!(shell_quote("hello world"), "'hello world'");
+    }
+
+    #[test]
+    fn test_shell_quote_with_single_quote() {
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn test_shell_quote_multiple_single_quotes() {
+        assert_eq!(shell_quote("it's a 'test'"), "'it'\\''s a '\\''test'\\'''");
+    }
+
+    #[test]
+    fn test_shell_quote_special_chars() {
+        // Special chars other than single quote should be preserved inside quotes
+        assert_eq!(shell_quote("$HOME"), "'$HOME'");
+        assert_eq!(shell_quote("foo; bar"), "'foo; bar'");
+        assert_eq!(shell_quote("foo && bar"), "'foo && bar'");
+    }
+
+    // ===== truncate tests =====
+
+    #[test]
+    fn test_truncate_short() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exact() {
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_long() {
+        assert_eq!(truncate("hello world", 5), "hello...");
+    }
+
+    #[test]
+    fn test_truncate_unicode() {
+        // Truncate by character count, not bytes
+        assert_eq!(truncate("日本語テスト", 3), "日本語...");
+    }
+
+    #[test]
+    fn test_truncate_empty() {
+        assert_eq!(truncate("", 5), "");
+    }
+
+    #[test]
+    fn test_truncate_zero_limit() {
+        assert_eq!(truncate("hello", 0), "...");
+    }
+
+    // ===== looks_like_internal_block tests =====
+
+    #[test]
+    fn test_looks_like_internal_block_env_context() {
+        assert!(looks_like_internal_block(
+            "<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>"
+        ));
+    }
+
+    #[test]
+    fn test_looks_like_internal_block_env_context_with_whitespace() {
+        assert!(looks_like_internal_block(
+            "  <environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>"
+        ));
+    }
+
+    #[test]
+    fn test_looks_like_internal_block_instructions() {
+        assert!(looks_like_internal_block(
+            "<INSTRUCTIONS>\nDo something\n</INSTRUCTIONS>"
+        ));
+    }
+
+    #[test]
+    fn test_looks_like_internal_block_agents_md() {
+        assert!(looks_like_internal_block("# AGENTS.md\nThis is agents config"));
+    }
+
+    #[test]
+    fn test_looks_like_internal_block_embedded_env() {
+        assert!(looks_like_internal_block(
+            "Some prefix\n<environment_context>\n</environment_context>"
+        ));
+    }
+
+    #[test]
+    fn test_looks_like_internal_block_embedded_instructions() {
+        assert!(looks_like_internal_block(
+            "Some prefix\n<INSTRUCTIONS>\n</INSTRUCTIONS>"
+        ));
+    }
+
+    #[test]
+    fn test_looks_like_internal_block_normal_text() {
+        assert!(!looks_like_internal_block("Hello, how can I help you?"));
+    }
+
+    #[test]
+    fn test_looks_like_internal_block_code() {
+        assert!(!looks_like_internal_block("fn main() { println!(\"hello\"); }"));
+    }
+
+    // ===== normalize_role tests =====
+
+    #[test]
+    fn test_normalize_role_assistant() {
+        assert_eq!(normalize_role("assistant"), "assistant");
+        assert_eq!(normalize_role("ASSISTANT"), "assistant");
+        assert_eq!(normalize_role("Assistant"), "assistant");
+    }
+
+    #[test]
+    fn test_normalize_role_model() {
+        assert_eq!(normalize_role("model"), "assistant");
+    }
+
+    #[test]
+    fn test_normalize_role_user() {
+        assert_eq!(normalize_role("user"), "user");
+        assert_eq!(normalize_role("USER"), "user");
+        assert_eq!(normalize_role("User"), "user");
+    }
+
+    #[test]
+    fn test_normalize_role_human() {
+        assert_eq!(normalize_role("human"), "user");
+        assert_eq!(normalize_role("Human"), "user");
+    }
+
+    #[test]
+    fn test_normalize_role_system() {
+        assert_eq!(normalize_role("system"), "system");
+        assert_eq!(normalize_role("SYSTEM"), "system");
+    }
+
+    #[test]
+    fn test_normalize_role_tool() {
+        assert_eq!(normalize_role("tool"), "tool");
+        assert_eq!(normalize_role("function"), "tool");
+    }
+
+    #[test]
+    fn test_normalize_role_unknown() {
+        assert_eq!(normalize_role("custom"), "custom");
+        assert_eq!(normalize_role("UNKNOWN"), "unknown");
+    }
+
+    #[test]
+    fn test_normalize_role_with_whitespace() {
+        assert_eq!(normalize_role("  user  "), "user");
+    }
+
+    // ===== extract_string_field tests =====
+
+    #[test]
+    fn test_extract_string_field_first_match() {
+        let json = serde_json::json!({"id": "123", "session_id": "456"});
+        assert_eq!(
+            extract_string_field(&json, &["session_id", "id"]),
+            Some("456".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_string_field_fallback() {
+        let json = serde_json::json!({"id": "123"});
+        assert_eq!(
+            extract_string_field(&json, &["session_id", "id"]),
+            Some("123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_string_field_none() {
+        let json = serde_json::json!({"foo": "bar"});
+        assert_eq!(extract_string_field(&json, &["id"]), None);
+    }
+
+    #[test]
+    fn test_extract_string_field_not_string() {
+        let json = serde_json::json!({"id": 123});
+        assert_eq!(extract_string_field(&json, &["id"]), None);
+    }
+
+    #[test]
+    fn test_extract_string_field_null() {
+        let json = serde_json::json!({"id": null});
+        assert_eq!(extract_string_field(&json, &["id"]), None);
+    }
+
+    #[test]
+    fn test_extract_string_field_not_object() {
+        let json = serde_json::json!("just a string");
+        assert_eq!(extract_string_field(&json, &["id"]), None);
+    }
 }
