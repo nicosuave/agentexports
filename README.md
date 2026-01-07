@@ -53,6 +53,10 @@ https://agentexports.com/v/ga1b2c3d4e5f6g7h8#SGVsbG8gV29ybGQh...
 
 Use the publish command to share your current session.
 
+## PR Mapping (experimental)
+
+Links transcript edits to git diff hunks. A Chrome extension (coming soon) will use this to show prompt history on GitHub PRs.
+
 ## How It Works
 
 ```
