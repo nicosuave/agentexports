@@ -4,9 +4,10 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use agentexport::{
-    Config, GistFormat, PublishOptions, StorageType, Tool, handle_claude_sessionstart, publish,
-    run_setup,
+    Config, GistFormat, MapOptions, MappingResult, PublishOptions, StorageType, Tool, encrypt_html,
+    handle_claude_sessionstart, map_transcripts, publish, resolve_transcript, run_setup,
 };
+use agentexport::upload::{upload_blob, upload_gist_raw_json};
 
 mod shares_cmd;
 
@@ -51,6 +52,41 @@ enum Commands {
         /// Title for the share (overrides auto-detected title)
         #[arg(long)]
         title: Option<String>,
+    },
+
+    /// Map transcript edits to git diff hunks
+    #[command(name = "map")]
+    Map {
+        /// Transcript JSONL paths (repeatable)
+        #[arg(long = "transcript")]
+        transcripts: Vec<PathBuf>,
+        /// Tool to auto-resolve transcript from current directory (repeatable)
+        #[arg(long = "tool", value_enum)]
+        tools: Vec<Tool>,
+        /// Maximum age in minutes for auto-resolved transcripts
+        #[arg(long, default_value_t = 10)]
+        max_age_minutes: u64,
+        /// Git repo root (defaults to current directory)
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Base commit (PR base)
+        #[arg(long)]
+        base: Option<String>,
+        /// Head commit (PR head)
+        #[arg(long)]
+        head: Option<String>,
+        /// Output file (defaults to stdout)
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Skip upload and only write to --out/stdout
+        #[arg(long)]
+        no_upload: bool,
+        /// Upload URL override (defaults to config upload_url)
+        #[arg(long)]
+        upload_url: Option<String>,
+        /// TTL for uploaded mapping (defaults to config default_ttl)
+        #[arg(long)]
+        ttl: Option<u64>,
     },
     #[command(name = "setup")]
     Setup,
@@ -172,6 +208,67 @@ fn run() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         }
+        Commands::Map {
+            transcripts,
+            tools,
+            max_age_minutes,
+            repo,
+            base,
+            head,
+            out,
+            no_upload,
+            upload_url,
+            ttl,
+        } => {
+            let mut resolved = transcripts;
+            let tools_to_use = tools;
+            let mut resolve_errors = Vec::new();
+            for tool in tools_to_use {
+                match resolve_transcript(tool, None, max_age_minutes) {
+                    Ok((path, _session_id, _thread_id)) => resolved.push(path),
+                    Err(err) => resolve_errors.push(err.to_string()),
+                }
+            }
+            if resolved.is_empty() {
+                let detail = if resolve_errors.is_empty() {
+                    "at least one --transcript path or --tool is required".to_string()
+                } else {
+                    format!("failed to resolve transcripts: {}", resolve_errors.join("; "))
+                };
+                anyhow::bail!("{detail}");
+            }
+            let repo_path = repo.unwrap_or(std::env::current_dir()?);
+            let head = head.unwrap_or_else(|| resolve_git_head(&repo_path).unwrap_or_default());
+            if head.is_empty() {
+                anyhow::bail!("unable to resolve head commit; pass --head");
+            }
+            let base = match base {
+                Some(value) => value,
+                None => resolve_git_base(&repo_path, &head)?,
+            };
+            let result = map_transcripts(MapOptions {
+                transcripts: resolved,
+                repo: repo_path,
+                base,
+                head,
+            })?;
+            if let Some(path) = out {
+                write_mapping_result(result.clone(), Some(path))?;
+            }
+            if !no_upload {
+                let config = Config::load().unwrap_or_default();
+                let effective_ttl = ttl.unwrap_or(config.default_ttl);
+                let effective_storage_type = config.storage_type;
+                let effective_upload_url = if effective_storage_type == StorageType::Gist {
+                    None
+                } else {
+                    Some(upload_url.unwrap_or(config.upload_url))
+                };
+                let url =
+                    upload_mapping(&result, effective_storage_type, effective_upload_url, effective_ttl)?;
+                println!("agentexport-map: {url}");
+            }
+        }
         Commands::Setup => {
             run_setup()?;
         }
@@ -238,6 +335,41 @@ fn read_stdin() -> Result<String> {
     let mut buf = String::new();
     std::io::stdin().read_to_string(&mut buf)?;
     Ok(buf)
+}
+
+fn write_mapping_result(result: MappingResult, out: Option<PathBuf>) -> Result<()> {
+    let json = serde_json::to_string_pretty(&result)?;
+    if let Some(path) = out {
+        std::fs::write(path, json)?;
+    } else {
+        println!("{json}");
+    }
+    Ok(())
+}
+
+fn upload_mapping(
+    result: &MappingResult,
+    storage_type: StorageType,
+    upload_url: Option<String>,
+    ttl_days: u64,
+) -> Result<String> {
+    let json = serde_json::to_string_pretty(result)?;
+    match storage_type {
+        StorageType::Gist => {
+            let description = format!("agentexport map {}..{}", result.base, result.head);
+            let gist = upload_gist_raw_json(&json, &description)?;
+            let base = upload_url.unwrap_or_else(|| "https://agentexports.com".to_string());
+            let base = base.trim_end_matches('/');
+            Ok(format!("{}/gm/{}", base, gist.id))
+        }
+        StorageType::Agentexport => {
+            let upload_url = upload_url.unwrap_or_else(|| "https://agentexports.com".to_string());
+            let encrypted = encrypt_html(&json)?;
+            let result = upload_blob(&upload_url, &encrypted.blob, &encrypted.key_b64, ttl_days)?;
+            let base = upload_url.trim_end_matches('/');
+            Ok(format!("{}/blob/{}#{}", base, result.id, encrypted.key_b64))
+        }
+    }
 }
 
 const REPO: &str = "nicosuave/agentexport";
@@ -355,6 +487,43 @@ fn run_update(skip_confirm: bool) -> Result<()> {
 
     println!("Updated agentexport to v{latest}");
     Ok(())
+}
+
+fn resolve_git_head(repo: &PathBuf) -> Result<String> {
+    git_command(repo, &["rev-parse", "HEAD"])
+}
+
+fn resolve_git_base(repo: &PathBuf, head: &str) -> Result<String> {
+    if let Ok(origin_head) = git_command(repo, &["symbolic-ref", "refs/remotes/origin/HEAD"]) {
+        if let Ok(base) = git_command(repo, &["merge-base", head, origin_head.trim()]) {
+            return Ok(base);
+        }
+    }
+    for candidate in ["origin/main", "origin/master", "main", "master"] {
+        if let Ok(base) = git_command(repo, &["merge-base", head, candidate]) {
+            return Ok(base);
+        }
+    }
+    anyhow::bail!("unable to infer base commit; pass --base")
+}
+
+fn git_command(repo: &PathBuf, args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            stdout.trim().to_string()
+        };
+        anyhow::bail!("git {} failed: {}", args.join(" "), detail);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn fetch_latest_version() -> Result<String> {

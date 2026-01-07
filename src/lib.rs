@@ -5,6 +5,7 @@
 pub mod config;
 mod crypto;
 mod gist;
+mod mapping;
 mod publish;
 mod setup;
 pub mod shares;
@@ -12,13 +13,19 @@ mod terminal;
 #[cfg(test)]
 pub mod test_utils;
 mod transcript;
-mod upload;
+pub mod upload;
 
 // Re-export public types from config
 pub use config::{Config, GistFormat, StorageType};
 
 // Re-export public types from transcript
 pub use transcript::Tool;
+
+// Re-export mapping API
+pub use mapping::{MapOptions, MappingResult, map_transcripts};
+
+// Re-export encryption helper for mapping uploads
+pub use crypto::encrypt_html;
 
 // Re-export public types and functions from publish
 pub use publish::{
@@ -30,4 +37,6 @@ pub use publish::{
 pub use setup::run as run_setup;
 
 // Re-export transcript utilities needed by external code
-pub use transcript::{cache_dir, codex_home_dir, codex_sessions_dir};
+pub use transcript::{
+    cache_dir, codex_home_dir, codex_sessions_dir, resolve_transcript, validate_transcript_fresh,
+};

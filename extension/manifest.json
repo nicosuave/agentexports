@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "AgentExport PR Links",
+  "version": "0.1.0",
+  "description": "Show transcript messages mapped to PR diffs.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://github.com/*",
+    "https://gist.githubusercontent.com/*",
+    "https://agentexports.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*/*/pull/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ]
+}

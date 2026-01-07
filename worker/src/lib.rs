@@ -109,9 +109,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v/:id", handle_viewer)
         .get_async("/g/:gist_id", handle_gist_viewer)
         .get_async("/blob/:id", handle_blob)
+        .get_async("/proxy", handle_proxy)
+        .get_async("/gm/:gist_id", handle_gist_map)
         .delete_async("/blob/:id", handle_delete)
         .options_async("/upload", handle_cors_preflight)
         .options_async("/blob/:id", handle_cors_preflight)
+        .options_async("/proxy", handle_cors_preflight)
+        .options_async("/gm/:gist_id", handle_cors_preflight)
         .run(req, env)
         .await
 }
@@ -286,6 +290,96 @@ async fn handle_blob(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
         }
         None => with_cors(Response::error("Not found", 404)?),
     }
+}
+
+async fn handle_proxy(req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    let url = req.url()?;
+    let target = url
+        .query_pairs()
+        .find(|(key, _)| key == "url")
+        .map(|(_, value)| value.into_owned())
+        .ok_or_else(|| Error::RustError("Missing url query param".into()))?;
+    let parsed = Url::parse(&target)?;
+    let host = parsed.host_str().unwrap_or("");
+    if host != "gist.githubusercontent.com" {
+        return Response::error("Only gist.githubusercontent.com is allowed", 400);
+    }
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get);
+    let upstream = Request::new_with_init(parsed.as_str(), &init)?;
+    let mut response = Fetch::Request(upstream).send().await?;
+    let status = response.status_code();
+    let bytes = response.bytes().await?;
+    let mut out = Response::from_bytes(bytes)?;
+    out = with_cors(out)?;
+    out.headers_mut()
+        .set("Content-Type", "application/json; charset=utf-8")?;
+    out = out.with_status(status);
+    Ok(out)
+}
+
+async fn handle_gist_map(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let gist_id = ctx.param("gist_id").map_or("", |v| v.as_str());
+    if !gist_id.chars().all(|c| c.is_ascii_hexdigit()) || gist_id.len() < 20 {
+        return Response::error("Invalid gist ID", 400);
+    }
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get);
+    let api_request = Request::new_with_init(
+        &format!("https://api.github.com/gists/{gist_id}"),
+        &init,
+    )?;
+    api_request
+        .headers()
+        .set("Accept", "application/vnd.github+json")?;
+    api_request.headers().set("User-Agent", "agentexport")?;
+
+    let mut api_response = Fetch::Request(api_request).send().await?;
+    if api_response.status_code() >= 400 {
+        return Response::error("Failed to fetch gist", api_response.status_code());
+    }
+    let gist: serde_json::Value = api_response.json().await?;
+    let files = gist
+        .get("files")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| Error::RustError("Missing files in gist".into()))?;
+
+    let file = if let Some(file) = files.get("agentexport-map.json") {
+        file
+    } else {
+        files
+            .values()
+            .next()
+            .ok_or_else(|| Error::RustError("No files in gist".into()))?
+    };
+
+    let truncated = file
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let content = file.get("content").and_then(|v| v.as_str());
+    let raw_url = file.get("raw_url").and_then(|v| v.as_str());
+
+    let bytes = if truncated || content.is_none() {
+        let raw_url = raw_url.ok_or_else(|| Error::RustError("Missing raw_url".into()))?;
+        let raw_request = Request::new(raw_url, Method::Get)?;
+        let mut raw_response = Fetch::Request(raw_request).send().await?;
+        if raw_response.status_code() >= 400 {
+            return Response::error("Failed to fetch gist raw content", raw_response.status_code());
+        }
+        raw_response.bytes().await?
+    } else {
+        content.unwrap_or_default().as_bytes().to_vec()
+    };
+
+    let mut response = Response::from_bytes(bytes)?;
+    response.headers_mut().set(
+        "Content-Type",
+        "application/json; charset=utf-8",
+    )?;
+    response = with_cors(response)?;
+    Ok(response)
 }
 
 async fn handle_viewer(_req: Request, ctx: RouteContext<()>) -> Result<Response> {

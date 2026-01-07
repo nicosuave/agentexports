@@ -57,6 +57,18 @@ Use the publish command to share your current session.
 
 Links transcript edits to git diff hunks. A Chrome extension (coming soon) will use this to show prompt history on GitHub PRs.
 
+If you use `storage_type = gist`, the map URL will look like:
+
+```
+https://your-worker-domain/gm/<gist_id>
+```
+
+If you paste a raw gist URL manually, include:
+
+```
+agentexport-map-proxy: https://your-worker-domain
+```
+
 ## How It Works
 
 ```

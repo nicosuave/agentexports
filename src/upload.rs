@@ -30,6 +30,13 @@ pub struct UploadResult {
     pub expires_at: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct GistUploadResult {
+    pub id: String,
+    pub raw_url: String,
+    pub html_url: String,
+}
+
 /// Generate a random delete token (64 hex chars)
 fn generate_delete_token() -> String {
     let mut bytes = [0u8; 32];
@@ -104,6 +111,61 @@ pub fn upload_gist(
         share_url,
         upload_url: upload_url.to_string(),
         expires_at: far_future_expires_at(),
+    })
+}
+
+pub fn upload_gist_raw_json(payload_json: &str, description: &str) -> Result<GistUploadResult> {
+    ensure_gh_ready()?;
+
+    let filename = "agentexport-map.json";
+    let body = serde_json::json!({
+        "public": false,
+        "description": description,
+        "files": {
+            filename: {
+                "content": payload_json
+            }
+        }
+    });
+
+    let temp = tempdir().context("Failed to create temp dir for gist payload")?;
+    let body_path = temp.path().join("gist.json");
+    let body_bytes = serde_json::to_vec(&body).context("Failed to serialize gist payload")?;
+    fs::write(&body_path, body_bytes).context("Failed to write gist payload")?;
+
+    let output = Command::new("gh")
+        .args(["api", "gists", "--input"])
+        .arg(&body_path)
+        .output()
+        .context("Failed to run gh api for gist create")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("gh api gist create failed: {}", stderr.trim());
+    }
+
+    let response: Value =
+        serde_json::from_slice(&output.stdout).context("Failed to parse gist response")?;
+    let id = response
+        .get("id")
+        .and_then(|v| v.as_str())
+        .context("Missing id in gist response")?;
+    let html_url = response
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let raw_url = response
+        .get("files")
+        .and_then(|v| v.get(filename))
+        .and_then(|v| v.get("raw_url"))
+        .and_then(|v| v.as_str())
+        .context("Missing raw_url in gist response")?;
+
+    Ok(GistUploadResult {
+        id: id.to_string(),
+        raw_url: raw_url.to_string(),
+        html_url,
     })
 }
 
